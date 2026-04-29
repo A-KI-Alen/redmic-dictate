@@ -27,6 +27,8 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
   quality text.
 - Stops the `small` quality worker immediately after `Space` so final insertion
   is driven by the fast `base` path.
+- Warms the `base` whisper server at app startup so short dictations do not pay
+  model-load time after `Space`.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 

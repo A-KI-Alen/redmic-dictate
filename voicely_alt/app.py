@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from dataclasses import replace
 
 from .config import AppConfig
@@ -31,6 +32,7 @@ def configure_logging() -> None:
 def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyManager, TrayApp]:
     hotkeys = KeyboardHotkeyManager(config)
     server = WhisperCppServerManager(config)
+    fast_transcriber = WhisperCppTranscriber(config, server)
     quality_transcriber = None
     if config.quality_chunking and config.quality_model:
         quality_config = replace(
@@ -46,7 +48,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
     controller = DictationController(
         config=config,
         recorder=AudioRecorder(config),
-        transcriber=WhisperCppTranscriber(config, server),
+        transcriber=fast_transcriber,
         quality_transcriber=quality_transcriber,
         paste_target=ClipboardPaste(config),
         text_processor=OllamaTranscriptCleaner(config),
@@ -62,6 +64,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
         controller.cancel_recording,
         controller.hard_abort,
     )
+    _warm_fast_transcriber(fast_transcriber)
     return controller, hotkeys, tray
 
 
@@ -83,3 +86,13 @@ def run_app(no_tray: bool = False) -> None:
                 hotkeys.stop()
     except AlreadyRunningError:
         logging.info("RedMic Dictate is already running; exiting duplicate instance.")
+
+
+def _warm_fast_transcriber(transcriber: WhisperCppTranscriber) -> None:
+    def run() -> None:
+        try:
+            transcriber.server.ensure_running()
+        except Exception:
+            logging.warning("Could not warm up fast whisper.cpp server", exc_info=True)
+
+    threading.Thread(target=run, daemon=True).start()

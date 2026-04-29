@@ -147,6 +147,10 @@ er die zwei schnellen `base`-Teile. Wenn nicht, wird sofort der vorhandene
 mehr von `small` blockiert werden kann. Nach `Space` muss dadurch meistens nur
 noch der letzte Rest verarbeitet und alles zusammengesetzt werden.
 
+Der schnelle `base`-Whisper-Server wird beim Start der App im Hintergrund
+vorgeladen. Dadurch muss ein kurzes Diktat nach `Space` nicht erst das Modell
+laden.
+
 Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
 also fuer die Zwischenablage. `Alt+Y` ist im stabilen Standard ein
 Direkt-Diktat: aufnehmen, stoppen, dann einmal transkribieren und einfuegen.
