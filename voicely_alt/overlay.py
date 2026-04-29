@@ -86,6 +86,7 @@ class RecordingOverlay:
                 "clipboard_hotkey": self.config.clipboard_hotkey,
                 "stop_hotkey": self.config.stop_hotkey,
                 "cancel_hotkey": self.config.cancel_hotkey,
+                "hard_abort_hotkey": self.config.hard_abort_hotkey,
                 "updated_at": time.time(),
             }
             overlay_status_path().write_text(

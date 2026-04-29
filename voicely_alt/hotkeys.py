@@ -80,17 +80,13 @@ class KeyboardHotkeyManager:
                 return
 
             self._recording_handles = [
-                self._keyboard.add_hotkey(
+                self._add_suppressed_recording_key(
                     _normalize_hotkey(self.config.stop_hotkey),
-                    self._handle_stop_key,
-                    suppress=True,
-                    trigger_on_release=False,
+                    self._handle_stop_key_down,
                 ),
-                self._keyboard.add_hotkey(
+                self._add_suppressed_recording_key(
                     _normalize_hotkey(self.config.cancel_hotkey),
-                    self._handle_cancel_key,
-                    suppress=True,
-                    trigger_on_release=False,
+                    self._handle_cancel_key_down,
                 ),
             ]
             LOG.info(
@@ -125,7 +121,10 @@ class KeyboardHotkeyManager:
         self._disable_generation += 1
         for handle in self._recording_handles:
             try:
-                self._keyboard.remove_hotkey(handle)
+                if callable(handle):
+                    handle()
+                else:
+                    self._keyboard.remove_hotkey(handle)
             except Exception:
                 LOG.debug("Failed to remove recording hotkey", exc_info=True)
         self._recording_handles = []
@@ -185,6 +184,43 @@ class KeyboardHotkeyManager:
         except Exception:
             LOG.exception("Hotkey callback failed")
 
+    def _add_suppressed_recording_key(
+        self,
+        hotkey: str,
+        callback: Callable[[], None],
+    ) -> object:
+        if self._keyboard is None:
+            raise HotkeyError("Hotkeys are not running.")
+
+        if "+" in hotkey:
+            return self._keyboard.add_hotkey(
+                hotkey,
+                callback,
+                suppress=True,
+                trigger_on_release=False,
+            )
+
+        return self._keyboard.hook_key(
+            hotkey,
+            lambda event: self._handle_suppressed_recording_event(event, callback),
+            suppress=True,
+        )
+
+    def _handle_suppressed_recording_event(
+        self,
+        event: object,
+        callback: Callable[[], None],
+    ) -> bool:
+        if _is_key_down_event(event):
+            callback()
+        return False
+
+    def _handle_stop_key_down(self) -> None:
+        self._handle_stop_key()
+
+    def _handle_cancel_key_down(self) -> None:
+        self._handle_cancel_key()
+
     def _handle_stop_key(self) -> None:
         with self._lock:
             if self._stop_pending:
@@ -234,3 +270,7 @@ def _normalize_hotkey(hotkey: str) -> str:
         else:
             parts.append(part)
     return "+".join(parts)
+
+
+def _is_key_down_event(event: object) -> bool:
+    return getattr(event, "event_type", None) == "down"

@@ -113,9 +113,6 @@ class DictationController:
             mode = self.output_mode
             session_id = self._session_id
             try:
-                if self.controls is not None:
-                    self.controls.disable_recording_controls()
-
                 if mode == OutputMode.LIVE_PASTE and self.config.live_streaming:
                     final_audio = self.recorder.stop_if_audio()
                     self._set_state(DictationState.TRANSCRIBING, "Live-Diktat wird abgeschlossen")
@@ -256,6 +253,9 @@ class DictationController:
         except Exception as exc:
             if self._session_active(session_id):
                 self._set_error(exc)
+        finally:
+            if self._session_active(session_id):
+                self._disable_recording_controls()
 
     def _transcribe_final(self, audio_path: Path, mode: OutputMode, session_id: int) -> None:
         try:
@@ -270,6 +270,9 @@ class DictationController:
         except Exception as exc:
             if self._session_active(session_id):
                 self._set_error(exc)
+        finally:
+            if self._session_active(session_id):
+                self._disable_recording_controls()
 
     def _transcribe_and_output(
         self,
@@ -351,6 +354,10 @@ class DictationController:
             except Exception:
                 LOG.debug("Failed to close text processor backend", exc_info=True)
 
+    def _disable_recording_controls(self) -> None:
+        if self.controls is not None:
+            self.controls.disable_recording_controls()
+
     def _set_state(self, state: DictationState, message: str) -> None:
         with self._lock:
             self.state = state
@@ -361,6 +368,7 @@ class DictationController:
             self.status_callback(state, message)
 
     def _set_error(self, exc: Exception) -> None:
+        self._disable_recording_controls()
         self.last_error = str(exc)
         LOG.exception("Dictation error")
         self._set_state(DictationState.ERROR, str(exc))

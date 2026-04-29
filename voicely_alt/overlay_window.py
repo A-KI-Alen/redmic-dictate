@@ -38,7 +38,7 @@ def run_overlay(config: AppConfig) -> None:
     import tkinter as tk
 
     size = max(54, int(config.overlay_size))
-    hud_width = 460
+    hud_width = 560
     hud_height = 112
 
     root = tk.Tk()
@@ -157,6 +157,7 @@ def draw_hud(canvas, width: int, height: int, status: dict[str, Any], processing
 
     stop = _hotkey_label(status.get("stop_hotkey", "space"))
     cancel = _hotkey_label(status.get("cancel_hotkey", "esc"))
+    hard_abort = _hotkey_label(status.get("hard_abort_hotkey", "space+esc"))
     live = _hotkey_label(status.get("live_hotkey", "alt+y"))
     clipboard = _hotkey_label(status.get("clipboard_hotkey", "alt+shift+y"))
     canvas.create_text(
@@ -170,7 +171,7 @@ def draw_hud(canvas, width: int, height: int, status: dict[str, Any], processing
     canvas.create_text(
         94,
         91,
-        text=f"Live: {live}    Zwischenablage: {clipboard}",
+        text=f"Hart: {hard_abort}    Live: {live}    Zwischenablage: {clipboard}",
         fill="#d9dde5",
         anchor="nw",
         font=("Segoe UI", 9),
@@ -207,6 +208,7 @@ def read_status(config: AppConfig) -> dict[str, Any]:
         "clipboard_hotkey": config.clipboard_hotkey,
         "stop_hotkey": config.stop_hotkey,
         "cancel_hotkey": config.cancel_hotkey,
+        "hard_abort_hotkey": config.hard_abort_hotkey,
     }
     try:
         status = json.loads(overlay_status_path().read_text(encoding="utf-8"))
