@@ -101,6 +101,7 @@ def create_cursor_overlay(root, size: int):
     window.canvas = canvas
     window.update_idletasks()
     make_click_through(window)
+    move_window(window, -size * 2, -size * 2, size, size)
     return window
 
 
@@ -118,6 +119,7 @@ def create_hud_overlay(root, width: int, height: int):
     window.canvas = canvas
     window.update_idletasks()
     make_click_through(window)
+    move_window(window, -width * 2, -height * 2, width, height)
     return window
 
 
@@ -278,15 +280,20 @@ def cursor_position(root) -> Point:
 
 
 def move_window(window, x: int, y: int, width: int, height: int) -> None:
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    try:
+        window.deiconify()
+    except Exception:
+        LOG.debug("Could not deiconify overlay window", exc_info=True)
+    make_click_through(window)
+
     if os.name == "nt":
         try:
             import ctypes
 
             hwnd_topmost = -1
-            sw_shownoactivate = 4
             swp_noactivate = 0x0010
             swp_showwindow = 0x0040
-            ctypes.windll.user32.ShowWindow(window.winfo_id(), sw_shownoactivate)
             ctypes.windll.user32.SetWindowPos(
                 window.winfo_id(),
                 hwnd_topmost,
@@ -299,8 +306,6 @@ def move_window(window, x: int, y: int, width: int, height: int) -> None:
             return
         except Exception:
             LOG.debug("SetWindowPos failed", exc_info=True)
-    window.deiconify()
-    window.geometry(f"{width}x{height}+{x}+{y}")
 
 
 def make_click_through(root) -> None:
@@ -311,11 +316,15 @@ def make_click_through(root) -> None:
 
         user32 = ctypes.windll.user32
         hwnd = root.winfo_id()
-        ex_style = user32.GetWindowLongW(hwnd, -20)
-        ex_style |= 0x00000020
-        ex_style |= 0x00000080
-        ex_style |= 0x08000000
-        user32.SetWindowLongW(hwnd, -20, ex_style)
+        get_window_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+        set_window_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+        ex_style = get_window_long(hwnd, -20)
+        ws_ex_layered = 0x00080000
+        ws_ex_transparent = 0x00000020
+        ws_ex_toolwindow = 0x00000080
+        ws_ex_noactivate = 0x08000000
+        ex_style |= ws_ex_layered | ws_ex_transparent | ws_ex_toolwindow | ws_ex_noactivate
+        set_window_long(hwnd, -20, ex_style)
     except Exception:
         LOG.debug("Could not make recording overlay click-through", exc_info=True)
 
