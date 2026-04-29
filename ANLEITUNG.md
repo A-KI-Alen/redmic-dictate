@@ -24,9 +24,7 @@ Mikrofonpegel folgt. Sobald die Aufnahme stoppt und verarbeitet wird, wechselt
 die Leiste auf eine Herzschlag-Kurve. Am Mauszeiger erscheint
 ein roter Ring; waehrend Text transkribiert oder nachkorrigiert wird, dreht sich
 dieser Ring. Jeder fertige Text bleibt zusaetzlich in der Zwischenablage, damit
-du ihn bei Bedarf mit `Ctrl+V` oder `Windows+V` wieder einfuegen kannst. Wenn
-ein Text erfolgreich in der Zwischenablage liegt, spielt das Tool ein dezentes
-Glockensignal.
+du ihn bei Bedarf mit `Ctrl+V` oder `Windows+V` wieder einfuegen kannst.
 
 ## Installation
 
@@ -90,8 +88,8 @@ Fuer die Zwischenablage:
 1. Druecke `Alt+Shift+Y`.
 2. Sprich den Text.
 3. Druecke `Space`.
-4. Nach dem Glockensignal liegt der Text in der Zwischenablage und kann mit
-   `Ctrl+V` eingefuegt werden.
+4. Danach liegt der Text in der Zwischenablage und kann mit `Ctrl+V` eingefuegt
+   werden.
 
 ## Konfiguration
 
@@ -111,7 +109,7 @@ cancel_hotkey = "esc"
 hard_abort_hotkey = "space+esc"
 language = "de"
 model = "auto"
-selected_model = "small"
+selected_model = "base"
 live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
@@ -119,7 +117,7 @@ background_chunk_seconds = 5
 recording_overlay = true
 taskbar_recording_overlay = true
 keep_transcript_clipboard = true
-beep_feedback = true
+beep_feedback = false
 tray_notifications = true
 transcript_cleanup = "clipboard"
 cleanup_model = "llama3.2:3b"
@@ -131,8 +129,10 @@ Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
 
 ## Modell und Geschwindigkeit
 
-Standard fuer bessere Qualitaet ist jetzt `small`. Es ist langsamer als `base`,
-erkennt aber deutsche Diktate meist sauberer.
+Standard ist jetzt `base`, weil es auf CPU deutlich schneller als `small` ist.
+Im lokalen Test brauchte `base` fuer 15 Sekunden Audio rund 5 Sekunden,
+`small` rund 14 Sekunden. `small` bleibt die Option fuer hoehere Qualitaet, wenn
+Wartezeit weniger wichtig ist.
 
 RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk im
 Hintergrund. Nach `Space` muss dadurch nur noch der letzte Rest verarbeitet und
@@ -150,8 +150,8 @@ Fuer einen automatischen Modellvergleich:
 .\scripts\benchmark.ps1 -RecordSeconds 8
 ```
 
-Das Tool testet `tiny`, `base` und `small` und speichert das schnellste
-funktionierende Modell.
+Das Tool testet `tiny`, `base` und `small`. Fuer deutsche Diktate ist `base`
+meist der bessere Kompromiss als `tiny`.
 
 ## Fehlerbehebung
 

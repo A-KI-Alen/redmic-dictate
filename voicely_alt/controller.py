@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -92,9 +93,12 @@ class DictationController:
         self._level_thread: threading.Thread | None = None
         self._chunk_stop_event: threading.Event | None = None
         self._chunk_thread: threading.Thread | None = None
+        self._chunk_transcribe_thread: threading.Thread | None = None
+        self._chunk_queue: queue.Queue[_ChunkResult] | None = None
         self._chunk_lock = threading.RLock()
         self._chunk_results: list[_ChunkResult] = []
         self._chunk_index = 0
+        self._chunk_in_progress = 0
 
     def start_recording(self, mode: OutputMode = OutputMode.LIVE_PASTE) -> bool:
         with self._lock:
@@ -306,8 +310,15 @@ class DictationController:
     def _start_chunk_worker(self, session_id: int) -> None:
         self._stop_chunk_worker(wait=True)
         self._chunk_stop_event = threading.Event()
-        self._chunk_thread = threading.Thread(target=self._chunk_loop, args=(session_id,), daemon=True)
+        self._chunk_queue = queue.Queue()
+        self._chunk_thread = threading.Thread(target=self._chunk_producer_loop, args=(session_id,), daemon=True)
+        self._chunk_transcribe_thread = threading.Thread(
+            target=self._chunk_transcribe_loop,
+            args=(session_id,),
+            daemon=True,
+        )
         self._chunk_thread.start()
+        self._chunk_transcribe_thread.start()
 
     def _request_chunk_worker_stop(self) -> None:
         if self._chunk_stop_event is not None:
@@ -315,20 +326,36 @@ class DictationController:
 
     def _stop_chunk_worker(self, wait: bool) -> None:
         event = self._chunk_stop_event
-        thread = self._chunk_thread
+        producer = self._chunk_thread
+        transcriber = self._chunk_transcribe_thread
         if event is not None:
             event.set()
-        if wait and thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=max(3, int(self.config.background_chunk_seconds) + 30))
-        if not wait or thread is None or not thread.is_alive():
+        if wait and producer is not None and producer.is_alive() and producer is not threading.current_thread():
+            producer.join(timeout=max(1, int(self.config.background_chunk_seconds) + 1))
+        if wait and transcriber is not None and transcriber.is_alive() and transcriber is not threading.current_thread():
+            transcriber.join(timeout=300)
+        if (
+            not wait
+            or (
+                (producer is None or not producer.is_alive())
+                and (transcriber is None or not transcriber.is_alive())
+            )
+        ):
             self._chunk_stop_event = None
             self._chunk_thread = None
+            self._chunk_transcribe_thread = None
+            self._chunk_queue = None
 
     def _chunk_worker_active(self) -> bool:
-        thread = self._chunk_thread
-        return thread is not None and thread.is_alive()
+        producer = self._chunk_thread
+        transcriber = self._chunk_transcribe_thread
+        return bool(
+            (producer is not None and producer.is_alive())
+            or (transcriber is not None and transcriber.is_alive())
+            or (self._chunk_queue is not None and not self._chunk_queue.empty())
+        )
 
-    def _chunk_loop(self, session_id: int) -> None:
+    def _chunk_producer_loop(self, session_id: int) -> None:
         event = self._chunk_stop_event
         if event is None:
             return
@@ -342,24 +369,53 @@ class DictationController:
             if not self._session_active(session_id):
                 return
             audio_path: Path | None = None
-            index = self._next_chunk_index()
             try:
                 audio_path = self.recorder.pop_chunk()
                 if audio_path is None:
                     continue
-                LOG.info("Pre-transcribing audio chunk %s", index)
-                text = self.transcriber.transcribe(audio_path).strip()
-                if not self._session_active(session_id):
+                index = self._next_chunk_index()
+                LOG.info("Queued audio chunk %s for pre-transcription", index)
+                self._queue_chunk_result(_ChunkResult(index=index, audio_path=audio_path))
+            except Exception:
+                LOG.exception("Background chunk capture failed")
+                if audio_path is not None:
                     _unlink_audio(audio_path)
+
+    def _chunk_transcribe_loop(self, session_id: int) -> None:
+        event = self._chunk_stop_event
+        work_queue = self._chunk_queue
+        if event is None or work_queue is None:
+            return
+
+        while self._session_active(session_id):
+            try:
+                result = work_queue.get(timeout=0.1)
+            except queue.Empty:
+                if event.is_set():
                     return
-                self._store_chunk_result(_ChunkResult(index=index, text=text))
-                _unlink_audio(audio_path)
+                continue
+
+            self._mark_chunk_in_progress(1)
+            try:
+                if result.audio_path is None:
+                    self._store_chunk_result(result)
+                    continue
+                LOG.info("Pre-transcribing audio chunk %s", result.index)
+                text = self.transcriber.transcribe(result.audio_path).strip()
+                if not self._session_active(session_id):
+                    _unlink_audio(result.audio_path)
+                    return
+                self._store_chunk_result(_ChunkResult(index=result.index, text=text))
+                _unlink_audio(result.audio_path)
             except Exception:
                 LOG.exception("Background chunk transcription failed")
-                if audio_path is not None and self._session_active(session_id):
-                    self._store_chunk_result(_ChunkResult(index=index, audio_path=audio_path))
-                elif audio_path is not None:
-                    _unlink_audio(audio_path)
+                if self._session_active(session_id):
+                    self._store_chunk_result(result)
+                elif result.audio_path is not None:
+                    _unlink_audio(result.audio_path)
+            finally:
+                self._mark_chunk_in_progress(-1)
+                work_queue.task_done()
 
     def _next_chunk_index(self) -> int:
         with self._chunk_lock:
@@ -371,10 +427,30 @@ class DictationController:
         with self._chunk_lock:
             self._chunk_results.append(result)
 
+    def _queue_chunk_result(self, result: _ChunkResult) -> None:
+        work_queue = self._chunk_queue
+        if work_queue is None:
+            if result.audio_path is not None:
+                _unlink_audio(result.audio_path)
+            return
+        work_queue.put(result)
+
+    def _mark_chunk_in_progress(self, delta: int) -> None:
+        with self._chunk_lock:
+            self._chunk_in_progress = max(0, self._chunk_in_progress + delta)
+
+    def _chunk_progress(self) -> tuple[int, int]:
+        with self._chunk_lock:
+            done = len(self._chunk_results)
+            in_progress = self._chunk_in_progress
+        queued = self._chunk_queue.qsize() if self._chunk_queue is not None else 0
+        return done, done + in_progress + queued
+
     def _reset_chunk_results(self) -> None:
         with self._chunk_lock:
             self._chunk_index = 0
             self._chunk_results = []
+            self._chunk_in_progress = 0
 
     def _chunk_results_snapshot(self) -> list[_ChunkResult]:
         with self._chunk_lock:
@@ -385,6 +461,7 @@ class DictationController:
             results = self._chunk_results
             self._chunk_results = []
             self._chunk_index = 0
+            self._chunk_in_progress = 0
         if delete_audio:
             for result in results:
                 if result.audio_path is not None:
@@ -453,7 +530,15 @@ class DictationController:
     ) -> None:
         try:
             if self._chunk_worker_active():
-                self._set_state(DictationState.TRANSCRIBING, "Warte auf laufenden 5s-Chunk")
+                self._set_state(DictationState.TRANSCRIBING, "Warte auf Chunk-Vorverarbeitung")
+            while self._chunk_worker_active() and self._session_active(session_id):
+                done, total = self._chunk_progress()
+                if total:
+                    self._set_state(
+                        DictationState.TRANSCRIBING,
+                        f"Vorverarbeitet {done}/{total} Chunks",
+                    )
+                time.sleep(0.35)
             self._stop_chunk_worker(wait=True)
             if not self._session_active(session_id):
                 if final_audio is not None:

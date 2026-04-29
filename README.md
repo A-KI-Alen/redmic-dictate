@@ -16,19 +16,20 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Pastes the German transcript into the currently focused input field.
 - Keeps every final transcript in the clipboard as a fallback.
 - Can locally clean up clipboard dictations with Ollama and `llama3.2:3b`.
-- Signals progress with tray status, Windows notifications, and short beeps.
+- Signals progress with tray status and Windows notifications; beeps are disabled by default.
 - Shows a red top-left recording HUD with current hotkeys and a live microphone level ticker.
 - Shows a red cursor ring while recording and a rotating ring while processing.
 - Shows a translucent red taskbar wave driven by the live microphone level while recording.
 - Switches the taskbar wave to a heartbeat curve while processing.
 - Pre-transcribes 5-second chunks in the background to reduce the wait after stopping.
+- Uses `base` by default as the current CPU speed/quality compromise.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
 ## Quick start
 
 ```powershell
-.\scripts\setup.ps1 -Model small
+.\scripts\setup.ps1 -Model base
 .\scripts\setup_llm.ps1
 .\scripts\start.ps1
 ```
@@ -87,7 +88,7 @@ live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
 background_chunk_seconds = 5
-beep_feedback = true
+beep_feedback = false
 tray_notifications = true
 recording_overlay = true
 overlay_size = 72
