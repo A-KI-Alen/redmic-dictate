@@ -39,6 +39,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
             config,
             model=config.quality_model,
             selected_model="",
+            threads=config.quality_threads,
             port=int(config.port) + 1,
         )
         quality_transcriber = WhisperCppTranscriber(

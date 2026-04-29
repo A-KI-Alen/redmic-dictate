@@ -445,7 +445,6 @@ class DictationController:
                     continue
                 index = self._next_chunk_index()
                 LOG.info("Queued audio chunk %s for pre-transcription", index)
-                self._maybe_queue_quality_chunk(index, audio_path)
                 self._queue_chunk_result(_ChunkResult(index=index, audio_path=audio_path))
             except Exception:
                 LOG.exception("Background chunk capture failed")
@@ -477,6 +476,7 @@ class DictationController:
                     _unlink_audio(result.audio_path)
                     return
                 self._store_chunk_result(_ChunkResult(index=result.index, text=text))
+                self._maybe_queue_quality_chunk(result.index, result.audio_path)
                 _unlink_audio(result.audio_path)
             except Exception:
                 LOG.exception("Background chunk transcription failed")
@@ -548,9 +548,31 @@ class DictationController:
             if group is None:
                 return
 
+            fast_backlog = self._fast_queue_depth()
+            if fast_backlog > int(self.config.quality_max_fast_backlog):
+                LOG.info(
+                    "Skipping quality chunks %s-%s because fast backlog is %s",
+                    group[0][0],
+                    group[-1][0],
+                    fast_backlog,
+                )
+                for _, path in group:
+                    _unlink_audio(path)
+                return
+
             group_audio = _combine_wav_files([path for _, path in group])
             for _, path in group:
                 _unlink_audio(path)
+            fast_backlog = self._fast_queue_depth()
+            if fast_backlog > int(self.config.quality_max_fast_backlog):
+                LOG.info(
+                    "Dropping quality chunks %s-%s because fast backlog rose to %s",
+                    group[0][0],
+                    group[-1][0],
+                    fast_backlog,
+                )
+                _unlink_audio(group_audio)
+                return
             self._queue_quality_work(
                 _QualityWork(
                     start_index=group[0][0],
@@ -623,6 +645,12 @@ class DictationController:
         fast_seconds = max(1, int(self.config.background_chunk_seconds))
         quality_seconds = max(fast_seconds, int(self.config.quality_chunk_seconds))
         return max(1, (quality_seconds + fast_seconds - 1) // fast_seconds)
+
+    def _fast_queue_depth(self) -> int:
+        work_queue = self._chunk_queue
+        if work_queue is None:
+            return 0
+        return work_queue.qsize()
 
     def _reset_chunk_results(self) -> None:
         with self._chunk_lock:

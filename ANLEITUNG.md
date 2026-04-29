@@ -116,7 +116,9 @@ background_chunking = true
 background_chunk_seconds = 5
 quality_chunking = true
 quality_model = "small"
+quality_threads = "2"
 quality_chunk_seconds = 10
+quality_max_fast_backlog = 0
 quality_wait_after_stop_seconds = 1.5
 recording_overlay = true
 taskbar_recording_overlay = true
@@ -140,9 +142,11 @@ Wartezeit weniger wichtig ist.
 
 RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk mit
 `base` im Hintergrund. Zusaetzlich werden fertige 10-Sekunden-Gruppen parallel
-mit `small` verarbeitet. Wenn ein `small`-Block rechtzeitig fertig ist, ersetzt
-er die zwei schnellen `base`-Teile. Wenn nicht, wird sofort der vorhandene
-`base`-Text genutzt. Sobald du `Space` drueckst, wird die laufende
+mit `small` verarbeitet, aber erst nachdem die passenden `base`-Chunks schon
+fertig sind. Wenn die schnelle Warteschlange Rueckstand hat, wird der
+`small`-Block uebersprungen. Wenn ein `small`-Block rechtzeitig fertig ist,
+ersetzt er die zwei schnellen `base`-Teile. Wenn nicht, wird sofort der
+vorhandene `base`-Text genutzt. Sobald du `Space` drueckst, wird die laufende
 `small`-Qualitaetsverarbeitung abgebrochen, damit die schnelle Ausgabe nicht
 mehr von `small` blockiert werden kann. Nach `Space` muss dadurch meistens nur
 noch der letzte Rest verarbeitet und alles zusammengesetzt werden.

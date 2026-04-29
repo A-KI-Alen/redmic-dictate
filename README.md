@@ -25,6 +25,9 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Uses `base` for fast 5-second chunks and, for longer recordings, runs `small`
   in parallel on 10-second groups to replace finished sections with higher
   quality text.
+- Gives the fast `base` path priority: `small` only receives audio after the
+  matching `base` chunks are already done and is skipped whenever the fast queue
+  has backlog.
 - Stops the `small` quality worker immediately after `Space` so final insertion
   is driven by the fast `base` path.
 - Warms the `base` whisper server at app startup so short dictations do not pay
@@ -96,7 +99,9 @@ background_chunking = true
 background_chunk_seconds = 5
 quality_chunking = true
 quality_model = "small"
+quality_threads = "2"
 quality_chunk_seconds = 10
+quality_max_fast_backlog = 0
 quality_wait_after_stop_seconds = 1.5
 beep_feedback = false
 tray_notifications = true

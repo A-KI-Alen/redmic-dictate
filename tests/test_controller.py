@@ -225,6 +225,33 @@ class ControllerTests(unittest.TestCase):
             finally:
                 work.audio_path.unlink(missing_ok=True)
 
+    def test_quality_chunking_skips_when_fast_queue_has_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller = DictationController(
+                config=AppConfig(
+                    background_chunk_seconds=5,
+                    quality_chunk_seconds=10,
+                    quality_max_fast_backlog=0,
+                ),
+                recorder=FakeRecorder(Path(directory) / "unused.wav"),
+                transcriber=NamedFakeTranscriber(),
+                quality_transcriber=FakeTranscriber(),
+                paste_target=FakePaste(),
+                controls=FakeControls(),
+                background=False,
+            )
+            controller._chunk_queue = Queue()
+            controller._quality_queue = Queue()
+            controller._chunk_queue.put(_ChunkResult(index=99, text="pending"))
+
+            paths = [Path(directory) / f"chunk_{index}.wav" for index in range(2)]
+            for index, path in enumerate(paths):
+                _write_test_wav(path, frames=160)
+                controller._maybe_queue_quality_chunk(index, path)
+
+            self.assertTrue(controller._quality_queue.empty())
+            self.assertEqual(controller._quality_pending_chunks, [])
+
     def test_stop_recording_closes_quality_worker_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "audio.wav"
