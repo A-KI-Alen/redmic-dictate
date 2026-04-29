@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import wave
+from queue import Queue
 from pathlib import Path
 
 from voicely_alt.config import AppConfig
-from voicely_alt.controller import DictationController, _ChunkResult
+from voicely_alt.controller import DictationController, _ChunkResult, _QualityResult
 from voicely_alt.state import DictationState, OutputMode
 
 
@@ -94,6 +96,14 @@ class FakeControls:
         self.enabled = False
 
 
+def _write_test_wav(path: Path, frames: int = 160) -> None:
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(b"\x01\x00" * frames)
+
+
 class ControllerTests(unittest.TestCase):
     def test_start_stop_transcribes_and_pastes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -161,6 +171,59 @@ class ControllerTests(unittest.TestCase):
 
             self.assertEqual(paste.text, "erster Teil zweiter Teil")
             self.assertFalse(final_audio.exists())
+
+    def test_quality_result_replaces_base_chunk_group(self) -> None:
+        paste = FakePaste()
+        controller = DictationController(
+            config=AppConfig(background_chunking=True, quality_chunking=True),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=NamedFakeTranscriber(),
+            paste_target=paste,
+            controls=FakeControls(),
+            background=False,
+        )
+        controller._session_id = 1
+        controller._store_chunk_result(_ChunkResult(index=0, text="base eins"))
+        controller._store_chunk_result(_ChunkResult(index=1, text="base zwei"))
+        controller._store_chunk_result(_ChunkResult(index=2, text="base drei"))
+        controller._store_chunk_result(_ChunkResult(index=3, text="base vier"))
+        controller._store_quality_result(_QualityResult(start_index=0, end_index=2, text="small block"))
+
+        controller._transcribe_final_with_chunks(None, OutputMode.LIVE_PASTE, 1)
+
+        self.assertEqual(paste.text, "small block base vier")
+
+    def test_quality_chunking_queues_15_second_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paste = FakePaste()
+            controller = DictationController(
+                config=AppConfig(
+                    background_chunking=True,
+                    background_chunk_seconds=5,
+                    quality_chunking=True,
+                    quality_chunk_seconds=15,
+                ),
+                recorder=FakeRecorder(Path(directory) / "unused.wav"),
+                transcriber=NamedFakeTranscriber(),
+                quality_transcriber=FakeTranscriber(),
+                paste_target=paste,
+                controls=FakeControls(),
+                background=False,
+            )
+            controller._quality_queue = Queue()
+            paths = [Path(directory) / f"chunk_{index}.wav" for index in range(3)]
+            for index, path in enumerate(paths):
+                _write_test_wav(path, frames=160)
+                controller._maybe_queue_quality_chunk(index, path)
+
+            work = controller._quality_queue.get_nowait()
+            try:
+                self.assertEqual(work.start_index, 0)
+                self.assertEqual(work.end_index, 2)
+                self.assertTrue(work.audio_path.exists())
+                self.assertEqual(controller._quality_pending_chunks, [])
+            finally:
+                work.audio_path.unlink(missing_ok=True)
 
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

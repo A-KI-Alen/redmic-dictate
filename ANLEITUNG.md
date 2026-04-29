@@ -114,6 +114,10 @@ live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
 background_chunk_seconds = 5
+quality_chunking = true
+quality_model = "small"
+quality_chunk_seconds = 15
+quality_wait_after_stop_seconds = 1.5
 recording_overlay = true
 taskbar_recording_overlay = true
 keep_transcript_clipboard = true
@@ -134,9 +138,12 @@ Im lokalen Test brauchte `base` fuer 15 Sekunden Audio rund 5 Sekunden,
 `small` rund 14 Sekunden. `small` bleibt die Option fuer hoehere Qualitaet, wenn
 Wartezeit weniger wichtig ist.
 
-RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk im
-Hintergrund. Nach `Space` muss dadurch nur noch der letzte Rest verarbeitet und
-alles zusammengesetzt werden.
+RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk mit
+`base` im Hintergrund. Zusaetzlich werden fertige 15-Sekunden-Gruppen parallel
+mit `small` verarbeitet. Wenn ein `small`-Block rechtzeitig fertig ist, ersetzt
+er die drei schnellen `base`-Teile. Wenn nicht, wird sofort der vorhandene
+`base`-Text genutzt. Nach `Space` muss dadurch meistens nur noch der letzte Rest
+verarbeitet und alles zusammengesetzt werden.
 
 Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
 also fuer die Zwischenablage. `Alt+Y` ist im stabilen Standard ein

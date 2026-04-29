@@ -22,7 +22,9 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Shows a translucent red taskbar wave driven by the live microphone level while recording.
 - Switches the taskbar wave to a heartbeat curve while processing.
 - Pre-transcribes 5-second chunks in the background to reduce the wait after stopping.
-- Uses `base` by default as the current CPU speed/quality compromise.
+- Uses `base` for fast 5-second chunks and, for longer recordings, runs `small`
+  in parallel on 15-second groups to replace finished sections with higher
+  quality text.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
@@ -88,6 +90,10 @@ live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
 background_chunk_seconds = 5
+quality_chunking = true
+quality_model = "small"
+quality_chunk_seconds = 15
+quality_wait_after_stop_seconds = 1.5
 beep_feedback = false
 tray_notifications = true
 recording_overlay = true

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import replace
 
 from .config import AppConfig
 from .controller import DictationController
@@ -30,10 +31,23 @@ def configure_logging() -> None:
 def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyManager, TrayApp]:
     hotkeys = KeyboardHotkeyManager(config)
     server = WhisperCppServerManager(config)
+    quality_transcriber = None
+    if config.quality_chunking and config.quality_model:
+        quality_config = replace(
+            config,
+            model=config.quality_model,
+            selected_model="",
+            port=int(config.port) + 1,
+        )
+        quality_transcriber = WhisperCppTranscriber(
+            quality_config,
+            WhisperCppServerManager(quality_config),
+        )
     controller = DictationController(
         config=config,
         recorder=AudioRecorder(config),
         transcriber=WhisperCppTranscriber(config, server),
+        quality_transcriber=quality_transcriber,
         paste_target=ClipboardPaste(config),
         text_processor=OllamaTranscriptCleaner(config),
         controls=hotkeys,

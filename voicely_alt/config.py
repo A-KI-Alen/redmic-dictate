@@ -36,6 +36,10 @@ class AppConfig:
     live_chunk_seconds: int = 4
     background_chunking: bool = True
     background_chunk_seconds: int = 5
+    quality_chunking: bool = True
+    quality_model: str = "small"
+    quality_chunk_seconds: int = 15
+    quality_wait_after_stop_seconds: float = 1.5
     paste_restore_delay_ms: int = 300
     beep_feedback: bool = False
     tray_notifications: bool = True
