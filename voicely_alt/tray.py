@@ -32,7 +32,10 @@ class TrayApp:
             self.icon.title = self.title
         self.notifier.on_status(state, message)
         if state == DictationState.RECORDING:
-            self.overlay.show()
+            mode = "processing" if "verarbeitet" in message.lower() else "recording"
+            self.overlay.show(mode, message)
+        elif state in {DictationState.TRANSCRIBING, DictationState.PASTING}:
+            self.overlay.show("processing", message)
         else:
             self.overlay.hide()
 

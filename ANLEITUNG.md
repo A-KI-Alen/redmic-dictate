@@ -15,9 +15,12 @@ zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
 - `Space`: Aufnahme stoppen.
 - `Esc`: Aufnahme abbrechen.
 
-Wenn die Aufnahme laeuft, siehst du ein grosses rotes Mikrofon am Mauszeiger und
-eine rote Markierung ueber der Windows-Taskleiste. Wenn ein Text erfolgreich in
-der Zwischenablage liegt, spielt das Tool ein dezentes Glockensignal.
+Wenn die Aufnahme laeuft, siehst du oben links ein rotes Statusfeld mit den
+aktuellen Tastenkombinationen und eine rote Markierung ueber der
+Windows-Taskleiste. Am Mauszeiger erscheint ein roter Ring; waehrend Text
+transkribiert oder nachkorrigiert wird, dreht sich dieser Ring. Wenn ein Text
+erfolgreich in der Zwischenablage liegt, spielt das Tool ein dezentes
+Glockensignal.
 
 ## Installation
 

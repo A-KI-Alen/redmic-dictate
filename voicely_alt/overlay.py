@@ -5,9 +5,11 @@ import os
 import subprocess
 import sys
 import threading
+import time
+import json
 
 from .config import AppConfig
-from .paths import logs_dir
+from .paths import logs_dir, overlay_status_path
 
 
 LOG = logging.getLogger(__name__)
@@ -19,9 +21,10 @@ class RecordingOverlay:
         self._process: subprocess.Popen | None = None
         self._lock = threading.RLock()
 
-    def show(self) -> None:
+    def show(self, mode: str = "recording", message: str = "") -> None:
         if not self.config.recording_overlay:
             return
+        self._write_status(mode, message)
         with self._lock:
             if self._process is not None and self._process.poll() is None:
                 return
@@ -50,7 +53,11 @@ class RecordingOverlay:
             finally:
                 log_handle.close()
 
+    def update(self, mode: str, message: str = "") -> None:
+        self.show(mode, message)
+
     def hide(self) -> None:
+        self._write_status("hidden", "")
         with self._lock:
             self._stop_process()
 
@@ -69,3 +76,21 @@ class RecordingOverlay:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             process.kill()
+
+    def _write_status(self, mode: str, message: str) -> None:
+        try:
+            payload = {
+                "mode": mode,
+                "message": message,
+                "live_hotkey": self.config.live_hotkey,
+                "clipboard_hotkey": self.config.clipboard_hotkey,
+                "stop_hotkey": self.config.stop_hotkey,
+                "cancel_hotkey": self.config.cancel_hotkey,
+                "updated_at": time.time(),
+            }
+            overlay_status_path().write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            LOG.debug("Could not write overlay status", exc_info=True)

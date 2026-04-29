@@ -71,5 +71,9 @@ def ollama_models_dir() -> Path:
     return path
 
 
+def overlay_status_path() -> Path:
+    return app_dir() / "overlay_status.json"
+
+
 def benchmark_sample_path() -> Path:
     return app_dir() / "benchmark_sample.wav"

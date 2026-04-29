@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 from .config import AppConfig
@@ -23,6 +24,8 @@ class KeyboardHotkeyManager:
         self._lock = threading.RLock()
         self._on_stop: Callable[[], None] | None = None
         self._on_cancel: Callable[[], None] | None = None
+        self._disable_generation = 0
+        self._disable_pending = False
 
     def start(
         self,
@@ -84,20 +87,72 @@ class KeyboardHotkeyManager:
                 self.config.cancel_hotkey,
             )
 
-    def disable_recording_controls(self) -> None:
+    def disable_recording_controls(self, force: bool = False) -> None:
         with self._lock:
             if self._keyboard is None:
                 return
+            if not force and self._recording_handles:
+                if self._disable_pending:
+                    return
+                self._disable_pending = True
+                self._disable_generation += 1
+                generation = self._disable_generation
+                threading.Thread(
+                    target=self._disable_after_key_release,
+                    args=(generation,),
+                    daemon=True,
+                ).start()
+                return
+            self._remove_recording_controls_locked()
+
+    def _remove_recording_controls_locked(self) -> None:
+        if self._keyboard is None:
+            return
+        self._disable_pending = False
+        self._disable_generation += 1
+        for handle in self._recording_handles:
+            try:
+                self._keyboard.remove_hotkey(handle)
+            except Exception:
+                LOG.debug("Failed to remove recording hotkey", exc_info=True)
+        self._recording_handles = []
+
+    def _recording_key_is_down(self) -> bool:
+        if self._keyboard is None:
+            return False
+        for hotkey in (self.config.stop_hotkey, self.config.cancel_hotkey):
+            try:
+                if self._keyboard.is_pressed(_normalize_hotkey(hotkey)):
+                    return True
+            except Exception:
+                LOG.debug("Could not read key state for %s", hotkey, exc_info=True)
+        return False
+
+    def _disable_after_key_release(self, generation: int) -> None:
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            with self._lock:
+                if generation != self._disable_generation:
+                    return
+                key_down = self._recording_key_is_down()
+            if not key_down:
+                time.sleep(0.15)
+                break
+            time.sleep(0.02)
+
+        with self._lock:
+            if generation == self._disable_generation:
+                self._remove_recording_controls_locked()
+
+    def stop(self) -> None:
+        with self._lock:
+            self.disable_recording_controls(force=True)
             for handle in self._recording_handles:
                 try:
                     self._keyboard.remove_hotkey(handle)
                 except Exception:
                     LOG.debug("Failed to remove recording hotkey", exc_info=True)
             self._recording_handles = []
-
-    def stop(self) -> None:
-        with self._lock:
-            self.disable_recording_controls()
             if self._keyboard is not None:
                 for handle in self._start_handles:
                     try:

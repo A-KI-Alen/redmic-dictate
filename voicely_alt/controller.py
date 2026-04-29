@@ -8,6 +8,7 @@ from typing import Protocol
 
 from .benchmark import benchmark_models, record_sample
 from .config import AppConfig
+from .focus import FocusTarget, capture_focus_target
 from .paths import benchmark_sample_path
 from .state import DictationState, OutputMode
 
@@ -72,12 +73,14 @@ class DictationController:
         self._lock = threading.RLock()
         self._live_stop_event: threading.Event | None = None
         self._live_thread: threading.Thread | None = None
+        self._focus_target: FocusTarget | None = None
 
     def start_recording(self, mode: OutputMode = OutputMode.LIVE_PASTE) -> bool:
         with self._lock:
             if self.state not in {DictationState.IDLE, DictationState.ERROR}:
                 return False
             try:
+                self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self.recorder.start()
                 if self.controls is not None:
@@ -87,6 +90,7 @@ class DictationController:
                     self._set_state(DictationState.RECORDING, "Live-Diktat laeuft")
                 else:
                     self._set_state(DictationState.RECORDING, "Clipboard-Aufnahme laeuft")
+                self._restore_focus_target()
                 return True
             except Exception as exc:
                 self._set_error(exc)
@@ -237,6 +241,8 @@ class DictationController:
 
     def _transcribe_and_output(self, audio_path: Path, mode: OutputMode, live_chunk: bool) -> None:
         try:
+            if live_chunk:
+                self._publish_recording_status("Text wird verarbeitet")
             transcript = self.transcriber.transcribe(audio_path).strip()
             if not transcript:
                 if not live_chunk:
@@ -258,12 +264,27 @@ class DictationController:
                 self.paste_target.copy_text(transcript)
             else:
                 text = _format_live_text(transcript) if live_chunk else transcript
+                self._restore_focus_target()
                 self.paste_target.paste_text(text)
         finally:
+            if live_chunk:
+                self._publish_recording_status("Live-Diktat laeuft")
             try:
                 audio_path.unlink(missing_ok=True)
             except Exception:
                 LOG.debug("Failed to remove temporary audio file: %s", audio_path, exc_info=True)
+
+    def _restore_focus_target(self) -> None:
+        if self._focus_target is not None:
+            self._focus_target.restore()
+
+    def _publish_recording_status(self, message: str) -> None:
+        with self._lock:
+            if self.state != DictationState.RECORDING:
+                return
+        LOG.info("%s: %s", DictationState.RECORDING.value, message)
+        if self.status_callback is not None:
+            self.status_callback(DictationState.RECORDING, message)
 
     def _set_state(self, state: DictationState, message: str) -> None:
         with self._lock:

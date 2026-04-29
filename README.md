@@ -15,7 +15,8 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Pastes the German transcript into the currently focused input field.
 - Can locally clean up clipboard dictations with Ollama and `llama3.2:3b`.
 - Signals progress with tray status, Windows notifications, and short beeps.
-- Shows a large red microphone overlay at the mouse pointer while recording.
+- Shows a red top-left recording HUD with the current hotkeys.
+- Shows a red cursor ring while recording and a rotating ring while processing.
 - Shows a translucent red bar over the Windows taskbar while recording.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
