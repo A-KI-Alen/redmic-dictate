@@ -68,7 +68,8 @@ def run_overlay(config: AppConfig) -> None:
         draw_cursor_ring(cursor.canvas, size, processing, angle)
         draw_hud(hud.canvas, hud_width, hud_height, status, processing, angle)
 
-        move_window(cursor, point.x - size // 2, point.y - size // 2, size, size)
+        cursor_x, cursor_y = cursor_indicator_position(monitor, point, size)
+        move_window(cursor, cursor_x, cursor_y, size, size)
         move_window(hud, left + 16, top + 16, hud_width, hud_height)
 
         for taskbar in taskbars:
@@ -263,6 +264,18 @@ def monitor_for_point(rects: list[tuple[int, int, int, int]], point: Point) -> t
     return rects[0]
 
 
+def cursor_indicator_position(monitor: tuple[int, int, int, int], point: Point, size: int) -> tuple[int, int]:
+    left, top, right, bottom = monitor
+    gap = max(14, size // 5)
+    x = point.x + gap
+    y = point.y + gap
+    if x + size > right:
+        x = point.x - size - gap
+    if y + size > bottom:
+        y = point.y - size - gap
+    return max(left, x), max(top, y)
+
+
 def cursor_position(root) -> Point:
     if os.name == "nt":
         try:
@@ -316,15 +329,11 @@ def make_click_through(root) -> None:
 
         user32 = ctypes.windll.user32
         hwnd = root.winfo_id()
-        get_window_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
-        set_window_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
-        ex_style = get_window_long(hwnd, -20)
-        ws_ex_layered = 0x00080000
-        ws_ex_transparent = 0x00000020
-        ws_ex_toolwindow = 0x00000080
-        ws_ex_noactivate = 0x08000000
-        ex_style |= ws_ex_layered | ws_ex_transparent | ws_ex_toolwindow | ws_ex_noactivate
-        set_window_long(hwnd, -20, ex_style)
+        ex_style = user32.GetWindowLongW(hwnd, -20)
+        ex_style |= 0x00000020
+        ex_style |= 0x00000080
+        ex_style |= 0x08000000
+        user32.SetWindowLongW(hwnd, -20, ex_style)
     except Exception:
         LOG.debug("Could not make recording overlay click-through", exc_info=True)
 
