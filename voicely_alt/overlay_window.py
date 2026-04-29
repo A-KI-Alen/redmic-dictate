@@ -299,20 +299,21 @@ def draw_microphone_wave_line(
     levels: list[float],
     fill: str,
 ) -> None:
-    center = y + height / 2
-    visible = max(8, min(len(levels), width // 5))
+    baseline = y + height - 1
+    visible = max(8, min(len(levels), width // 7))
     recent = levels[-visible:]
     step = width / max(1, visible - 1)
     points: list[float] = []
     for index, level in enumerate(recent):
-        level = _clamp_level(level)
-        phase = index * 0.82
-        direction = 1 if int(phase / 3.14159) % 2 == 0 else -1
-        curve = 0.35 + 0.65 * abs((index % 9) - 4) / 4
-        y_value = center - direction * max(1.0, level * curve * height * 0.48)
-        points.extend([x + index * step, y_value])
+        level = _clamp_level(level) * 1.35
+        level = min(1.0, level)
+        left = x + index * step
+        mid = left + step * 0.48
+        right = left + step * 0.96
+        peak = baseline - max(0.0, level * height * 0.94)
+        points.extend([left, baseline, mid, peak, right, baseline])
     if len(points) >= 4:
-        canvas.create_line(*points, fill=fill, width=2, smooth=True)
+        canvas.create_line(*points, fill=fill, width=2, smooth=False)
 
 
 def read_status(config: AppConfig) -> dict[str, Any]:

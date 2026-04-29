@@ -126,11 +126,11 @@ class AudioRecorder:
         del frames, time_info, status
         data = bytes(indata)
         rms = pcm16_rms(data)
-        level = min(1.0, (rms / 1800.0) ** 0.75)
+        level = min(1.0, (rms / 900.0) ** 0.62)
         with self._lock:
             self._frames.extend(data)
             previous = float(getattr(self, "_latest_level", 0.0))
-            self._latest_level = max(level, previous * 0.72)
+            self._latest_level = max(level, previous * 0.45)
             self._latest_level_at = time.monotonic()
 
     def _close_stream(self) -> None:

@@ -41,12 +41,45 @@ class FakeKeyboard:
         return key in self.pressed
 
 
+class FakeKeyEvent:
+    def __init__(self, event_type: str):
+        self.event_type = event_type
+
+
 class HotkeyTests(unittest.TestCase):
     def test_normalize_windows_hotkey_alias(self) -> None:
         self.assertEqual(_normalize_hotkey("win+alt+space"), "windows+alt+space")
 
     def test_plain_space_stays_plain(self) -> None:
         self.assertEqual(_normalize_hotkey("space"), "space")
+
+    def test_alt_y_start_hook_suppresses_y(self) -> None:
+        keyboard = FakeKeyboard()
+        manager = KeyboardHotkeyManager(AppConfig())
+        manager._keyboard = keyboard
+        live_calls = []
+        clipboard_calls = []
+
+        handles = manager._register_start_hotkeys(
+            lambda: live_calls.append("live"),
+            lambda: clipboard_calls.append("clipboard"),
+        )
+
+        self.assertEqual(handles, [keyboard.hooks[0][0]])
+        self.assertEqual(keyboard.hooks[0][1:], ("y", keyboard.hooks[0][2], True))
+
+        callback = keyboard.hooks[0][2]
+        self.assertTrue(callback(FakeKeyEvent("down")))
+
+        keyboard.pressed.add("alt")
+        self.assertFalse(callback(FakeKeyEvent("down")))
+        self.assertFalse(callback(FakeKeyEvent("up")))
+        self.assertEqual(live_calls, ["live"])
+
+        keyboard.pressed.add("shift")
+        self.assertFalse(callback(FakeKeyEvent("down")))
+        self.assertFalse(callback(FakeKeyEvent("up")))
+        self.assertEqual(clipboard_calls, ["clipboard"])
 
     def test_recording_controls_block_keys_and_poll_for_stop(self) -> None:
         keyboard = FakeKeyboard()

@@ -31,6 +31,7 @@ class KeyboardHotkeyManager:
         self._stop_pending = False
         self._recording_monitor_stop: threading.Event | None = None
         self._recording_monitor_thread: threading.Thread | None = None
+        self._start_key_pending = False
 
     def start(
         self,
@@ -50,20 +51,7 @@ class KeyboardHotkeyManager:
             self._on_stop = on_stop
             self._on_cancel = on_cancel
             self._on_hard_abort = on_hard_abort
-            self._start_handles = [
-                keyboard.add_hotkey(
-                    _normalize_hotkey(self.config.live_hotkey),
-                    lambda: self._safe_call(on_live_start),
-                    suppress=True,
-                    trigger_on_release=False,
-                ),
-                keyboard.add_hotkey(
-                    _normalize_hotkey(self.config.clipboard_hotkey),
-                    lambda: self._safe_call(on_clipboard_start),
-                    suppress=True,
-                    trigger_on_release=False,
-                ),
-            ]
+            self._start_handles = self._register_start_hotkeys(on_live_start, on_clipboard_start)
             self._hard_abort_handle = keyboard.add_hotkey(
                 _normalize_hotkey(self.config.hard_abort_hotkey),
                 lambda: self._safe_call(on_hard_abort),
@@ -125,10 +113,7 @@ class KeyboardHotkeyManager:
         self._stop_recording_monitor_locked()
         for handle in self._recording_handles:
             try:
-                if callable(handle):
-                    handle()
-                else:
-                    self._keyboard.remove_hotkey(handle)
+                self._remove_keyboard_handle(handle)
             except Exception:
                 LOG.debug("Failed to remove recording hotkey", exc_info=True)
         self._recording_handles = []
@@ -166,12 +151,12 @@ class KeyboardHotkeyManager:
             if self._keyboard is not None:
                 for handle in self._start_handles:
                     try:
-                        self._keyboard.remove_hotkey(handle)
+                        self._remove_keyboard_handle(handle)
                     except Exception:
                         LOG.debug("Failed to remove start hotkey", exc_info=True)
                 if self._hard_abort_handle is not None:
                     try:
-                        self._keyboard.remove_hotkey(self._hard_abort_handle)
+                        self._remove_keyboard_handle(self._hard_abort_handle)
                     except Exception:
                         LOG.debug("Failed to remove hard abort hotkey", exc_info=True)
             self._start_handles = []
@@ -187,6 +172,70 @@ class KeyboardHotkeyManager:
             callback()
         except Exception:
             LOG.exception("Hotkey callback failed")
+
+    def _register_start_hotkeys(
+        self,
+        on_live_start: Callable[[], None],
+        on_clipboard_start: Callable[[], None],
+    ) -> list[object]:
+        if self._keyboard is None:
+            raise HotkeyError("Hotkeys are not running.")
+
+        live_hotkey = _normalize_hotkey(self.config.live_hotkey)
+        clipboard_hotkey = _normalize_hotkey(self.config.clipboard_hotkey)
+        if live_hotkey == "alt+y" and clipboard_hotkey == "alt+shift+y":
+            return [
+                self._keyboard.hook_key(
+                    "y",
+                    lambda event: self._handle_alt_y_start_event(
+                        event,
+                        on_live_start,
+                        on_clipboard_start,
+                    ),
+                    suppress=True,
+                )
+            ]
+
+        return [
+            self._keyboard.add_hotkey(
+                live_hotkey,
+                lambda: self._safe_call(on_live_start),
+                suppress=True,
+                trigger_on_release=False,
+            ),
+            self._keyboard.add_hotkey(
+                clipboard_hotkey,
+                lambda: self._safe_call(on_clipboard_start),
+                suppress=True,
+                trigger_on_release=False,
+            ),
+        ]
+
+    def _handle_alt_y_start_event(
+        self,
+        event: object,
+        on_live_start: Callable[[], None],
+        on_clipboard_start: Callable[[], None],
+    ) -> bool:
+        alt_down = self._is_pressed("alt")
+        shift_down = self._is_pressed("shift")
+
+        with self._lock:
+            pending = self._start_key_pending
+            if _is_key_up_event(event):
+                self._start_key_pending = False
+
+        if not alt_down and not pending:
+            return True
+
+        if _is_key_down_event(event):
+            with self._lock:
+                if self._start_key_pending:
+                    return False
+                self._start_key_pending = True
+            self._safe_call(on_clipboard_start if shift_down else on_live_start)
+
+        return False
 
     def _add_blocked_recording_key(
         self,
@@ -208,6 +257,14 @@ class KeyboardHotkeyManager:
         if callable(block_key):
             return block_key(hotkey)
         return self._keyboard.hook_key(hotkey, lambda event: False, suppress=True)
+
+    def _remove_keyboard_handle(self, handle: object) -> None:
+        if self._keyboard is None:
+            return
+        if callable(handle):
+            handle()
+        else:
+            self._keyboard.remove_hotkey(handle)
 
     def _start_recording_monitor_locked(self) -> None:
         if self._recording_monitor_thread is not None and self._recording_monitor_thread.is_alive():
@@ -310,3 +367,11 @@ def _normalize_hotkey(hotkey: str) -> str:
         else:
             parts.append(part)
     return "+".join(parts)
+
+
+def _is_key_down_event(event: object) -> bool:
+    return getattr(event, "event_type", None) == "down"
+
+
+def _is_key_up_event(event: object) -> bool:
+    return getattr(event, "event_type", None) == "up"

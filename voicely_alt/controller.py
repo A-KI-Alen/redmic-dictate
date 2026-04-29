@@ -477,6 +477,7 @@ class DictationController:
                     )
                     parts.append(self._transcribe_audio_path(result.audio_path, session_id))
                 done_parts += 1
+                self._set_state(DictationState.TRANSCRIBING, f"Verarbeite {done_parts}/{total_parts} Teile")
 
             if final_audio is not None:
                 self._set_state(
@@ -485,6 +486,7 @@ class DictationController:
                 )
                 parts.append(self._transcribe_audio_path(final_audio, session_id))
                 done_parts += 1
+                self._set_state(DictationState.TRANSCRIBING, f"Verarbeite {done_parts}/{total_parts} Teile")
 
             transcript = _join_transcript_parts(parts)
             if not self._session_active(session_id):

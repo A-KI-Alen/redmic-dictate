@@ -44,10 +44,8 @@ class UserNotifier:
 
 
 def _notification_text(state: DictationState, message: str) -> tuple[str, str]:
-    if state == DictationState.RECORDING:
-        return "RedMic Dictate", "Aufnahme laeuft. Leertaste stoppt, Esc bricht ab."
-    if state == DictationState.TRANSCRIBING:
-        return "RedMic Dictate", "Transkription laeuft."
+    if state in {DictationState.RECORDING, DictationState.TRANSCRIBING, DictationState.PASTING}:
+        return "RedMic Dictate", ""
     if state == DictationState.IDLE and message:
         return "RedMic Dictate", message
     if state == DictationState.ERROR:
@@ -76,4 +74,3 @@ def _beep_for_status(state: DictationState, message: str) -> None:
             winsound.Beep(220, 180)
     except Exception:
         LOG.debug("Beep feedback failed", exc_info=True)
-
