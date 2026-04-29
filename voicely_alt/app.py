@@ -6,6 +6,7 @@ import sys
 from .config import AppConfig
 from .controller import DictationController
 from .hotkeys import KeyboardHotkeyManager
+from .llm import OllamaTranscriptCleaner
 from .paths import logs_dir
 from .paste import ClipboardPaste
 from .recorder import AudioRecorder
@@ -34,6 +35,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
         recorder=AudioRecorder(config),
         transcriber=WhisperCppTranscriber(config, server),
         paste_target=ClipboardPaste(config),
+        text_processor=OllamaTranscriptCleaner(config),
         controls=hotkeys,
     )
     tray = TrayApp(config, controller)

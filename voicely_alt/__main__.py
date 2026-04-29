@@ -8,6 +8,7 @@ from .app import run_app
 from .benchmark import benchmark_models, record_sample
 from .config import AppConfig
 from .installer import ensure_model, install_whispercpp
+from .llm import pull_ollama_model
 from .paths import benchmark_sample_path, config_path
 from .whispercpp import WhisperCppTranscriber
 
@@ -22,6 +23,9 @@ def main() -> None:
     setup_parser = subparsers.add_parser("setup", help="Download whisper.cpp and local model")
     setup_parser.add_argument("--model", choices=["tiny", "base", "small"], default="base")
     setup_parser.add_argument("--blas", action="store_true", help="Prefer the BLAS Windows build")
+
+    llm_parser = subparsers.add_parser("setup-llm", help="Pull the local Ollama cleanup model")
+    llm_parser.add_argument("--model", default="llama3.2:3b")
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Benchmark local models")
     benchmark_parser.add_argument("--sample", type=Path, help="Existing WAV file to benchmark")
@@ -50,6 +54,12 @@ def main() -> None:
         config.save()
         print(f"whisper.cpp: {executable}")
         print(f"model: {model_file}")
+    elif command == "setup-llm":
+        pull_ollama_model(config, args.model)
+        config.cleanup_model = args.model
+        config.transcript_cleanup = "clipboard"
+        config.save()
+        print(f"cleanup model: {args.model}")
     elif command == "benchmark":
         install_whispercpp()
         sample = args.sample

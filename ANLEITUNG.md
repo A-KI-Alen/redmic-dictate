@@ -3,7 +3,8 @@
 RedMic Dictate ist ein lokales Diktier-Tool fuer Windows. Es laeuft im
 Hintergrund, nimmt per Tastenkombination Sprache auf, transkribiert lokal mit
 `whisper.cpp` und schreibt den Text entweder direkt in das aktive Eingabefeld
-oder legt ihn in die Zwischenablage.
+oder legt ihn in die Zwischenablage. Fuer die Zwischenablage kann der Text
+zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
 
 ## Tastenkombinationen
 
@@ -29,6 +30,17 @@ Einmalig im Projektordner ausfuehren:
 Das Skript erstellt eine lokale `.venv`, installiert die Python-Abhaengigkeiten,
 laedt `whisper.cpp` herunter und installiert das deutsche/multilinguale
 `base`-Modell.
+
+Fuer bessere Qualitaet:
+
+```powershell
+.\scripts\setup.ps1 -Model small
+.\scripts\setup_llm.ps1
+```
+
+`small` verbessert die Roh-Transkription. `setup_llm.ps1` installiert ein
+lokales Ollama-Sprachmodell fuer vorsichtige Nachkorrektur in der
+Zwischenablage-Variante.
 
 ## Starten
 
@@ -86,12 +98,15 @@ stop_hotkey = "space"
 cancel_hotkey = "esc"
 language = "de"
 model = "auto"
-selected_model = "base"
+selected_model = "small"
 live_chunk_seconds = 4
 recording_overlay = true
 taskbar_recording_overlay = true
 beep_feedback = true
 tray_notifications = true
+transcript_cleanup = "clipboard"
+cleanup_model = "llama3.2:3b"
+cleanup_keep_alive = "30m"
 ```
 
 Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
@@ -99,8 +114,12 @@ Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
 
 ## Modell und Geschwindigkeit
 
-Standard ist `base`, weil es auf deinem Laptop ein guter Kompromiss aus
-Geschwindigkeit und Qualitaet ist.
+Standard fuer bessere Qualitaet ist jetzt `small`. Es ist langsamer als `base`,
+erkennt aber deutsche Diktate meist sauberer.
+
+Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
+also fuer die Zwischenablage. `Alt+Y` bleibt live und schnell; dort wuerde eine
+LLM-Korrektur pro Textstueck zu viel Verzoegerung erzeugen.
 
 Fuer einen automatischen Modellvergleich:
 

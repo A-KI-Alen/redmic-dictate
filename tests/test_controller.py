@@ -6,7 +6,7 @@ from pathlib import Path
 
 from voicely_alt.config import AppConfig
 from voicely_alt.controller import DictationController
-from voicely_alt.state import DictationState
+from voicely_alt.state import DictationState, OutputMode
 
 
 class FakeRecorder:
@@ -47,6 +47,21 @@ class FakePaste:
 
     def copy_text(self, text: str) -> None:
         self.text = text
+
+
+class FakeTextProcessor:
+    def __init__(self):
+        self.calls = []
+
+    def will_process(self, mode: OutputMode, live_chunk: bool) -> bool:
+        return mode == OutputMode.CLIPBOARD and not live_chunk
+
+    def process(self, text: str, mode: OutputMode, live_chunk: bool) -> str:
+        self.calls.append((text, mode, live_chunk))
+        return "Hallo, Welt."
+
+    def close(self) -> None:
+        pass
 
 
 class FakeControls:
@@ -128,6 +143,49 @@ class ControllerTests(unittest.TestCase):
 
             self.assertEqual(controller.state, DictationState.IDLE)
             self.assertEqual(paste.text, "Hallo Welt")
+
+    def test_clipboard_mode_can_run_text_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "audio.wav"
+            audio_path.write_bytes(b"fake wav")
+            paste = FakePaste()
+            processor = FakeTextProcessor()
+            controller = DictationController(
+                config=AppConfig(),
+                recorder=FakeRecorder(audio_path),
+                transcriber=FakeTranscriber(),
+                paste_target=paste,
+                text_processor=processor,
+                controls=FakeControls(),
+                background=False,
+            )
+
+            self.assertTrue(controller.start_clipboard_recording())
+            self.assertTrue(controller.stop_recording())
+
+            self.assertEqual(paste.text, "Hallo, Welt.")
+            self.assertEqual(processor.calls, [("Hallo Welt", OutputMode.CLIPBOARD, False)])
+
+    def test_live_chunks_skip_text_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "audio.wav"
+            audio_path.write_bytes(b"fake wav")
+            paste = FakePaste()
+            processor = FakeTextProcessor()
+            controller = DictationController(
+                config=AppConfig(),
+                recorder=FakeRecorder(audio_path),
+                transcriber=FakeTranscriber(),
+                paste_target=paste,
+                text_processor=processor,
+                controls=FakeControls(),
+                background=False,
+            )
+
+            controller._transcribe_and_output(audio_path, OutputMode.LIVE_PASTE, live_chunk=True)
+
+            self.assertEqual(paste.text, "Hallo Welt ")
+            self.assertEqual(processor.calls, [])
 
 
 if __name__ == "__main__":

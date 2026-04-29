@@ -53,5 +53,23 @@ def logs_dir() -> Path:
     return path
 
 
+def llm_dir() -> Path:
+    path = app_dir() / "llm"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def ollama_dir() -> Path:
+    path = llm_dir() / "ollama"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def ollama_models_dir() -> Path:
+    path = llm_dir() / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def benchmark_sample_path() -> Path:
     return app_dir() / "benchmark_sample.wav"

@@ -27,6 +27,12 @@ class Transcriber(Protocol):
     def transcribe(self, audio_path: Path) -> str: ...
 
 
+class TextProcessor(Protocol):
+    def will_process(self, mode: OutputMode, live_chunk: bool) -> bool: ...
+    def process(self, text: str, mode: OutputMode, live_chunk: bool) -> str: ...
+    def close(self) -> None: ...
+
+
 class OutputTarget(Protocol):
     def paste_text(self, text: str) -> None: ...
     def copy_text(self, text: str) -> None: ...
@@ -47,6 +53,7 @@ class DictationController:
         recorder: Recorder,
         transcriber: Transcriber,
         paste_target: OutputTarget,
+        text_processor: TextProcessor | None = None,
         controls: RecordingControls | None = None,
         status_callback: StatusCallback | None = None,
         background: bool = True,
@@ -55,6 +62,7 @@ class DictationController:
         self.recorder = recorder
         self.transcriber = transcriber
         self.paste_target = paste_target
+        self.text_processor = text_processor
         self.controls = controls
         self.status_callback = status_callback
         self.background = background
@@ -168,6 +176,9 @@ class DictationController:
             close = getattr(self.transcriber, "close", None)
             if callable(close):
                 close()
+            processor_close = getattr(self.text_processor, "close", None)
+            if callable(processor_close):
+                processor_close()
             self._set_state(DictationState.IDLE, "Beendet")
 
     def _start_live_worker(self) -> None:
@@ -231,6 +242,16 @@ class DictationController:
                 if not live_chunk:
                     self._set_state(DictationState.IDLE, "Kein Text erkannt")
                 return
+            if (
+                self.text_processor is not None
+                and self.text_processor.will_process(mode, live_chunk)
+            ):
+                self._set_state(DictationState.TRANSCRIBING, "Text wird lokal nachkorrigiert")
+                transcript = self.text_processor.process(transcript, mode, live_chunk).strip()
+                if not transcript:
+                    if not live_chunk:
+                        self._set_state(DictationState.IDLE, "Kein Text erkannt")
+                    return
 
             if mode == OutputMode.CLIPBOARD:
                 self._set_state(DictationState.PASTING, "Text wird in Zwischenablage gelegt")

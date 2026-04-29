@@ -22,19 +22,23 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.overlay_size, 72)
         self.assertTrue(config.taskbar_recording_overlay)
         self.assertEqual(config.taskbar_overlay_height, 22)
+        self.assertEqual(config.transcript_cleanup, "clipboard")
+        self.assertEqual(config.cleanup_backend, "ollama")
+        self.assertEqual(config.cleanup_model, "llama3.2:3b")
 
     def test_config_roundtrip(self) -> None:
         import tempfile
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
-            config = AppConfig(selected_model="base", port=9000)
+            config = AppConfig(selected_model="base", port=9000, transcript_cleanup="off")
 
             config.save(path)
             loaded = AppConfig.load(path)
 
         self.assertEqual(loaded.selected_model, "base")
         self.assertEqual(loaded.port, 9000)
+        self.assertEqual(loaded.transcript_cleanup, "off")
         self.assertEqual(loaded.resolved_model(), "base")
 
 

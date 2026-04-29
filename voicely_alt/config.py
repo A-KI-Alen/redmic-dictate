@@ -38,6 +38,17 @@ class AppConfig:
     taskbar_recording_overlay: bool = True
     taskbar_overlay_height: int = 22
     taskbar_overlay_alpha: float = 0.90
+    transcript_cleanup: str = "clipboard"
+    cleanup_backend: str = "ollama"
+    cleanup_model: str = "llama3.2:3b"
+    cleanup_host: str = "127.0.0.1"
+    cleanup_port: int = 11434
+    cleanup_timeout_seconds: int = 180
+    cleanup_keep_alive: str = "30m"
+    cleanup_context: str = (
+        "RedMic Dictate, Windows, Alt, Shift, Y, Taskleiste, rote Leiste, "
+        "Zwischenablage, Transkription, Mikrofon, Mauszeiger, Hotkey, Codex, OpenAI"
+    )
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AppConfig":
