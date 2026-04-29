@@ -20,12 +20,17 @@ class RecordingOverlay:
         self.config = config
         self._process: subprocess.Popen | None = None
         self._lock = threading.RLock()
+        self._mode = "hidden"
+        self._message = ""
+        self._audio_level = 0.0
 
     def show(self, mode: str = "recording", message: str = "") -> None:
         if not self.config.recording_overlay:
             return
-        self._write_status(mode, message)
         with self._lock:
+            self._mode = mode
+            self._message = message
+            self._write_status_locked()
             if self._process is not None and self._process.poll() is None:
                 return
 
@@ -57,12 +62,24 @@ class RecordingOverlay:
         self.show(mode, message)
 
     def hide(self) -> None:
-        self._write_status("hidden", "")
         with self._lock:
+            self._mode = "hidden"
+            self._message = ""
+            self._audio_level = 0.0
+            self._write_status_locked()
             self._stop_process()
 
     def stop(self) -> None:
         self.hide()
+
+    def set_level(self, level: float) -> None:
+        if not self.config.recording_overlay:
+            return
+        with self._lock:
+            if self._mode == "hidden":
+                return
+            self._audio_level = max(0.0, min(1.0, float(level)))
+            self._write_status_locked()
 
     def _stop_process(self) -> None:
         if self._process is None:
@@ -77,21 +94,25 @@ class RecordingOverlay:
         except subprocess.TimeoutExpired:
             process.kill()
 
-    def _write_status(self, mode: str, message: str) -> None:
+    def _write_status_locked(self) -> None:
         try:
+            status_path = overlay_status_path()
             payload = {
-                "mode": mode,
-                "message": message,
+                "mode": self._mode,
+                "message": self._message,
                 "live_hotkey": self.config.live_hotkey,
                 "clipboard_hotkey": self.config.clipboard_hotkey,
                 "stop_hotkey": self.config.stop_hotkey,
                 "cancel_hotkey": self.config.cancel_hotkey,
                 "hard_abort_hotkey": self.config.hard_abort_hotkey,
+                "audio_level": round(self._audio_level, 4),
                 "updated_at": time.time(),
             }
-            overlay_status_path().write_text(
+            tmp_path = status_path.with_suffix(".tmp")
+            tmp_path.write_text(
                 json.dumps(payload, ensure_ascii=False),
                 encoding="utf-8",
             )
+            tmp_path.replace(status_path)
         except Exception:
             LOG.debug("Could not write overlay status", exc_info=True)

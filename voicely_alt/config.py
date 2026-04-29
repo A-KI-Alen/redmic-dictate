@@ -25,6 +25,7 @@ class AppConfig:
     selected_model: str = ""
     threads: str = "auto"
     paste_method: str = "clipboard"
+    keep_transcript_clipboard: bool = True
     cloud_fallback: str = "manual"
     host: str = "127.0.0.1"
     port: int = 8080
@@ -33,6 +34,8 @@ class AppConfig:
     silence_rms_threshold: int = 60
     live_streaming: bool = False
     live_chunk_seconds: int = 4
+    background_chunking: bool = True
+    background_chunk_seconds: int = 15
     paste_restore_delay_ms: int = 300
     beep_feedback: bool = True
     tray_notifications: bool = True

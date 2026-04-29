@@ -39,7 +39,7 @@ def run_overlay(config: AppConfig) -> None:
 
     size = max(54, int(config.overlay_size))
     hud_width = 560
-    hud_height = 112
+    hud_height = 148
 
     root = tk.Tk()
     root.withdraw()
@@ -51,6 +51,7 @@ def run_overlay(config: AppConfig) -> None:
 
     rects = monitor_rects(root)
     angle = 0
+    level_history: list[float] = [0.0] * 320
 
     def refresh() -> None:
         nonlocal angle
@@ -65,15 +66,19 @@ def run_overlay(config: AppConfig) -> None:
         left, top, right, bottom = monitor
 
         processing = mode == "processing"
+        level = _clamp_level(status.get("audio_level", 0.0))
+        level_history.append(0.0 if processing else level)
+        del level_history[:-320]
+
         draw_cursor_ring(cursor.canvas, size, processing, angle)
-        draw_hud(hud.canvas, hud_width, hud_height, status, processing, angle)
+        draw_hud(hud.canvas, hud_width, hud_height, status, processing, angle, level_history)
 
         cursor_x, cursor_y = cursor_indicator_position(monitor, point, size)
         move_window(cursor, cursor_x, cursor_y, size, size)
         move_window(hud, left + 16, top + 16, hud_width, hud_height)
 
         for taskbar in taskbars:
-            taskbar.configure(bg=RED if not processing else DARK_RED)
+            draw_taskbar_wave(taskbar.canvas, taskbar.width_px, taskbar.height_px, level_history, processing, angle)
             taskbar.lift()
         hud.lift()
         cursor.lift()
@@ -139,21 +144,30 @@ def draw_cursor_ring(canvas, size: int, processing: bool, angle: int) -> None:
         canvas.create_oval(size // 2 - dot, size // 2 - dot, size // 2 + dot, size // 2 + dot, fill=RED, outline=RED)
 
 
-def draw_hud(canvas, width: int, height: int, status: dict[str, Any], processing: bool, angle: int) -> None:
+def draw_hud(
+    canvas,
+    width: int,
+    height: int,
+    status: dict[str, Any],
+    processing: bool,
+    angle: int,
+    level_history: list[float],
+) -> None:
     canvas.delete("all")
     canvas.create_rectangle(0, 0, width, height, fill=HUD_BG, outline=RED, width=2)
     canvas.create_rectangle(0, 0, 78, height, fill=RED, outline=RED)
 
-    canvas.create_oval(21, 18, 57, 54, fill=RED if not processing else HUD_BG, outline=WHITE, width=4)
+    canvas.create_oval(21, 20, 57, 56, fill=RED if not processing else HUD_BG, outline=WHITE, width=4)
     if processing:
-        canvas.create_arc(21, 18, 57, 54, start=angle, extent=115, style="arc", outline=WHITE, width=4)
+        canvas.create_arc(21, 20, 57, 56, start=angle, extent=115, style="arc", outline=WHITE, width=4)
     else:
-        canvas.create_oval(32, 29, 46, 43, fill=WHITE, outline=WHITE)
+        canvas.create_oval(32, 31, 46, 45, fill=WHITE, outline=WHITE)
 
     headline = "VERARBEITE TEXT" if processing else "AUFNAHME"
     subline = status.get("message") or ("Bitte warten" if processing else "Mikrofon aktiv")
     canvas.create_text(94, 20, text=headline, fill=WHITE, anchor="nw", font=("Segoe UI", 15, "bold"))
     canvas.create_text(94, 45, text=subline, fill="#f5c7cd", anchor="nw", font=("Segoe UI", 10))
+    draw_level_ticker(canvas, 94, 68, width - 112, 30, level_history, processing, angle)
 
     stop = _hotkey_label(status.get("stop_hotkey", "space"))
     cancel = _hotkey_label(status.get("cancel_hotkey", "esc"))
@@ -162,7 +176,7 @@ def draw_hud(canvas, width: int, height: int, status: dict[str, Any], processing
     clipboard = _hotkey_label(status.get("clipboard_hotkey", "alt+shift+y"))
     canvas.create_text(
         94,
-        72,
+        105,
         text=f"Stop: {stop}    Abbruch: {cancel}",
         fill=WHITE,
         anchor="nw",
@@ -170,12 +184,69 @@ def draw_hud(canvas, width: int, height: int, status: dict[str, Any], processing
     )
     canvas.create_text(
         94,
-        91,
+        124,
         text=f"Hart: {hard_abort}    Live: {live}    Zwischenablage: {clipboard}",
         fill="#d9dde5",
         anchor="nw",
         font=("Segoe UI", 9),
     )
+
+
+def draw_level_ticker(
+    canvas,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    levels: list[float],
+    processing: bool,
+    angle: int,
+) -> None:
+    canvas.create_rectangle(x, y, x + width, y + height, fill="#231217", outline="#5c1822", width=1)
+    if processing:
+        draw_heartbeat_line(canvas, x + 6, y + 2, width - 12, height - 4, angle, "#ffd0d7")
+        return
+
+    center = y + height / 2
+    bar_width = 5
+    gap = 3
+    visible = max(1, min(len(levels), width // (bar_width + gap)))
+    recent = levels[-visible:]
+    start_x = x + width - visible * (bar_width + gap) + gap
+    for index, level in enumerate(recent):
+        level = _clamp_level(level)
+        bar_height = max(4, level * (height - 6))
+        left = start_x + index * (bar_width + gap)
+        top = center - bar_height / 2
+        bottom = center + bar_height / 2
+        fill = WHITE if index > visible - 5 else "#ff8794"
+        canvas.create_rectangle(left, top, left + bar_width, bottom, fill=fill, outline=fill)
+
+
+def draw_heartbeat_line(canvas, x: int, y: int, width: int, height: int, angle: int, fill: str) -> None:
+    center = y + height / 2
+    amplitude = height * 0.42
+    period = 104
+    offset = (angle * 2) % period
+    points: list[float] = []
+    for px in range(0, width + 5, 5):
+        local = (px + offset) % period
+        level = 0.0
+        if 18 <= local < 28:
+            level = -0.18 * _segment(local, 18, 28)
+        elif 28 <= local < 36:
+            level = -0.18 * (1.0 - _segment(local, 28, 36))
+        elif 42 <= local < 47:
+            level = 0.85 * _segment(local, 42, 47)
+        elif 47 <= local < 52:
+            level = 0.85 - 1.75 * _segment(local, 47, 52)
+        elif 52 <= local < 59:
+            level = -0.90 + 1.30 * _segment(local, 52, 59)
+        elif 59 <= local < 70:
+            level = 0.40 * (1.0 - _segment(local, 59, 70))
+        points.extend([x + px, center - level * amplitude])
+    if len(points) >= 4:
+        canvas.create_line(*points, fill=fill, width=2, smooth=True)
 
 
 def create_taskbar_overlays(root, config: AppConfig) -> list:
@@ -193,11 +264,47 @@ def create_taskbar_overlays(root, config: AppConfig) -> list:
         window.attributes("-topmost", True)
         window.attributes("-alpha", max(0.15, min(0.95, float(config.taskbar_overlay_alpha))))
         window.configure(bg=RED)
+        canvas = tk.Canvas(window, width=right - left, height=height, bg=RED, highlightthickness=0, bd=0)
+        canvas.pack()
+        window.canvas = canvas
+        window.width_px = right - left
+        window.height_px = height
         window.update_idletasks()
         make_click_through(window)
         move_window(window, left, bottom - height, right - left, height)
         overlays.append(window)
     return overlays
+
+
+def draw_taskbar_wave(
+    canvas,
+    width: int,
+    height: int,
+    levels: list[float],
+    processing: bool,
+    angle: int,
+) -> None:
+    bg = DARK_RED if processing else RED
+    canvas.delete("all")
+    canvas.create_rectangle(0, 0, width, height, fill=bg, outline=bg)
+    if processing:
+        draw_heartbeat_line(canvas, 0, 1, width, max(4, height - 2), angle, "#ffe2e6")
+        return
+
+    center = height / 2
+    bar_width = 4
+    gap = 4
+    visible = max(1, min(len(levels), width // (bar_width + gap)))
+    recent = levels[-visible:]
+    start_x = width - visible * (bar_width + gap)
+    for index, level in enumerate(recent):
+        level = _clamp_level(level)
+        bar_height = max(3, level * max(5, height - 4))
+        left = start_x + index * (bar_width + gap)
+        top = center - bar_height / 2
+        bottom = center + bar_height / 2
+        fill = "#fff5f7"
+        canvas.create_rectangle(left, top, left + bar_width, bottom, fill=fill, outline=fill)
 
 
 def read_status(config: AppConfig) -> dict[str, Any]:
@@ -209,6 +316,7 @@ def read_status(config: AppConfig) -> dict[str, Any]:
         "stop_hotkey": config.stop_hotkey,
         "cancel_hotkey": config.cancel_hotkey,
         "hard_abort_hotkey": config.hard_abort_hotkey,
+        "audio_level": 0.0,
     }
     try:
         status = json.loads(overlay_status_path().read_text(encoding="utf-8"))
@@ -217,6 +325,19 @@ def read_status(config: AppConfig) -> dict[str, Any]:
     except Exception:
         LOG.debug("Could not read overlay status", exc_info=True)
     return defaults
+
+
+def _clamp_level(value: object) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except Exception:
+        return 0.0
+
+
+def _segment(value: float, start: float, end: float) -> float:
+    if end <= start:
+        return 0.0
+    return max(0.0, min(1.0, (value - start) / (end - start)))
 
 
 def monitor_rects(root) -> list[tuple[int, int, int, int]]:

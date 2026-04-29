@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -21,6 +23,7 @@ class Recorder(Protocol):
     def stop(self) -> Path: ...
     def stop_if_audio(self) -> Path | None: ...
     def pop_chunk(self) -> Path | None: ...
+    def current_level(self) -> float: ...
     def cancel(self) -> None: ...
 
 
@@ -45,6 +48,14 @@ class RecordingControls(Protocol):
 
 
 StatusCallback = Callable[[DictationState, str], None]
+LevelCallback = Callable[[float], None]
+
+
+@dataclass(slots=True)
+class _ChunkResult:
+    index: int
+    text: str = ""
+    audio_path: Path | None = None
 
 
 class DictationController:
@@ -57,6 +68,7 @@ class DictationController:
         text_processor: TextProcessor | None = None,
         controls: RecordingControls | None = None,
         status_callback: StatusCallback | None = None,
+        level_callback: LevelCallback | None = None,
         background: bool = True,
     ):
         self.config = config
@@ -66,6 +78,7 @@ class DictationController:
         self.text_processor = text_processor
         self.controls = controls
         self.status_callback = status_callback
+        self.level_callback = level_callback
         self.background = background
         self.state = DictationState.IDLE
         self.output_mode = OutputMode.LIVE_PASTE
@@ -75,6 +88,13 @@ class DictationController:
         self._live_thread: threading.Thread | None = None
         self._focus_target: FocusTarget | None = None
         self._session_id = 0
+        self._level_stop_event: threading.Event | None = None
+        self._level_thread: threading.Thread | None = None
+        self._chunk_stop_event: threading.Event | None = None
+        self._chunk_thread: threading.Thread | None = None
+        self._chunk_lock = threading.RLock()
+        self._chunk_results: list[_ChunkResult] = []
+        self._chunk_index = 0
 
     def start_recording(self, mode: OutputMode = OutputMode.LIVE_PASTE) -> bool:
         with self._lock:
@@ -86,13 +106,19 @@ class DictationController:
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self.recorder.start()
+                self._reset_chunk_results()
+                self._start_level_worker(session_id)
                 if self.controls is not None:
                     self.controls.enable_recording_controls()
                 if mode == OutputMode.LIVE_PASTE:
                     if self.config.live_streaming:
                         self._start_live_worker(session_id)
+                    elif self.config.background_chunking:
+                        self._start_chunk_worker(session_id)
                     self._set_state(DictationState.RECORDING, "Live-Diktat laeuft")
                 else:
+                    if self.config.background_chunking:
+                        self._start_chunk_worker(session_id)
                     self._set_state(DictationState.RECORDING, "Clipboard-Aufnahme laeuft")
                 self._restore_focus_target()
                 return True
@@ -113,7 +139,17 @@ class DictationController:
             mode = self.output_mode
             session_id = self._session_id
             try:
-                if mode == OutputMode.LIVE_PASTE and self.config.live_streaming:
+                self._stop_level_worker(wait=False)
+                if self._chunk_worker_active():
+                    self._request_chunk_worker_stop()
+                    final_audio = self.recorder.stop_if_audio()
+                    if mode == OutputMode.CLIPBOARD:
+                        self._set_state(DictationState.TRANSCRIBING, "Transkription fuer Zwischenablage laeuft")
+                    else:
+                        self._set_state(DictationState.TRANSCRIBING, "Transkription laeuft")
+                    target = self._transcribe_final_with_chunks
+                    args = (final_audio, mode, session_id)
+                elif mode == OutputMode.LIVE_PASTE and self.config.live_streaming:
                     final_audio = self.recorder.stop_if_audio()
                     self._set_state(DictationState.TRANSCRIBING, "Live-Diktat wird abgeschlossen")
                     target = self._finish_live_recording
@@ -141,11 +177,14 @@ class DictationController:
             if self.state != DictationState.RECORDING:
                 return False
             try:
+                self._session_id += 1
                 self._stop_live_worker(wait=False)
+                self._stop_chunk_worker(wait=False)
+                self._stop_level_worker(wait=False)
                 if self.controls is not None:
                     self.controls.disable_recording_controls(force=True)
                 self.recorder.cancel()
-                self._session_id += 1
+                self._clear_chunk_results(delete_audio=True)
                 self._set_state(DictationState.IDLE, "Aufnahme abgebrochen")
                 return True
             except Exception as exc:
@@ -156,12 +195,15 @@ class DictationController:
         with self._lock:
             self._session_id += 1
             self._stop_live_worker(wait=False)
+            self._stop_chunk_worker(wait=False)
+            self._stop_level_worker(wait=False)
             if self.controls is not None:
                 self.controls.disable_recording_controls(force=True)
             try:
                 self.recorder.cancel()
             except Exception:
                 LOG.debug("Failed to cancel recorder during hard abort", exc_info=True)
+            self._clear_chunk_results(delete_audio=True)
             self.state = DictationState.IDLE
             self.last_error = ""
 
@@ -193,6 +235,8 @@ class DictationController:
     def shutdown(self) -> None:
         with self._lock:
             self._stop_live_worker(wait=False)
+            self._stop_chunk_worker(wait=False)
+            self._stop_level_worker(wait=False)
             if self.controls is not None:
                 self.controls.disable_recording_controls(force=True)
             if self.state == DictationState.RECORDING:
@@ -201,6 +245,7 @@ class DictationController:
                 except Exception:
                     LOG.debug("Failed to cancel active recording during shutdown", exc_info=True)
             self._session_id += 1
+            self._clear_chunk_results(delete_audio=True)
             self._close_processing_backends()
             self._set_state(DictationState.IDLE, "Beendet")
 
@@ -219,6 +264,129 @@ class DictationController:
             thread.join(timeout=max(2, self.config.live_chunk_seconds + 2))
         self._live_stop_event = None
         self._live_thread = None
+
+    def _start_level_worker(self, session_id: int) -> None:
+        if self.level_callback is None:
+            return
+        self._stop_level_worker(wait=True)
+        self._level_stop_event = threading.Event()
+        self._level_thread = threading.Thread(target=self._level_loop, args=(session_id,), daemon=True)
+        self._level_thread.start()
+
+    def _stop_level_worker(self, wait: bool) -> None:
+        event = self._level_stop_event
+        thread = self._level_thread
+        if event is not None:
+            event.set()
+        if wait and thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+        self._level_stop_event = None
+        self._level_thread = None
+        if self.level_callback is not None:
+            try:
+                self.level_callback(0.0)
+            except Exception:
+                LOG.debug("Audio level callback failed", exc_info=True)
+
+    def _level_loop(self, session_id: int) -> None:
+        event = self._level_stop_event
+        if event is None or self.level_callback is None:
+            return
+
+        while not event.wait(0.055):
+            if not self._session_active(session_id):
+                return
+            try:
+                self.level_callback(self.recorder.current_level())
+            except Exception:
+                LOG.debug("Audio level callback failed", exc_info=True)
+
+    def _start_chunk_worker(self, session_id: int) -> None:
+        self._stop_chunk_worker(wait=True)
+        self._chunk_stop_event = threading.Event()
+        self._chunk_thread = threading.Thread(target=self._chunk_loop, args=(session_id,), daemon=True)
+        self._chunk_thread.start()
+
+    def _request_chunk_worker_stop(self) -> None:
+        if self._chunk_stop_event is not None:
+            self._chunk_stop_event.set()
+
+    def _stop_chunk_worker(self, wait: bool) -> None:
+        event = self._chunk_stop_event
+        thread = self._chunk_thread
+        if event is not None:
+            event.set()
+        if wait and thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=max(3, int(self.config.background_chunk_seconds) + 30))
+        if not wait or thread is None or not thread.is_alive():
+            self._chunk_stop_event = None
+            self._chunk_thread = None
+
+    def _chunk_worker_active(self) -> bool:
+        thread = self._chunk_thread
+        return thread is not None and thread.is_alive()
+
+    def _chunk_loop(self, session_id: int) -> None:
+        event = self._chunk_stop_event
+        if event is None:
+            return
+
+        interval = max(5, int(self.config.background_chunk_seconds))
+        next_at = time.monotonic() + interval
+        while True:
+            if event.wait(max(0.0, next_at - time.monotonic())):
+                return
+            next_at += interval
+            if not self._session_active(session_id):
+                return
+            audio_path: Path | None = None
+            index = self._next_chunk_index()
+            try:
+                audio_path = self.recorder.pop_chunk()
+                if audio_path is None:
+                    continue
+                LOG.info("Pre-transcribing audio chunk %s", index)
+                text = self.transcriber.transcribe(audio_path).strip()
+                if not self._session_active(session_id):
+                    _unlink_audio(audio_path)
+                    return
+                self._store_chunk_result(_ChunkResult(index=index, text=text))
+                _unlink_audio(audio_path)
+            except Exception:
+                LOG.exception("Background chunk transcription failed")
+                if audio_path is not None and self._session_active(session_id):
+                    self._store_chunk_result(_ChunkResult(index=index, audio_path=audio_path))
+                elif audio_path is not None:
+                    _unlink_audio(audio_path)
+
+    def _next_chunk_index(self) -> int:
+        with self._chunk_lock:
+            index = self._chunk_index
+            self._chunk_index += 1
+            return index
+
+    def _store_chunk_result(self, result: _ChunkResult) -> None:
+        with self._chunk_lock:
+            self._chunk_results.append(result)
+
+    def _reset_chunk_results(self) -> None:
+        with self._chunk_lock:
+            self._chunk_index = 0
+            self._chunk_results = []
+
+    def _chunk_results_snapshot(self) -> list[_ChunkResult]:
+        with self._chunk_lock:
+            return sorted(self._chunk_results, key=lambda result: result.index)
+
+    def _clear_chunk_results(self, delete_audio: bool) -> None:
+        with self._chunk_lock:
+            results = self._chunk_results
+            self._chunk_results = []
+            self._chunk_index = 0
+        if delete_audio:
+            for result in results:
+                if result.audio_path is not None:
+                    _unlink_audio(result.audio_path)
 
     def _live_loop(self, session_id: int) -> None:
         event = self._live_stop_event
@@ -249,7 +417,7 @@ class DictationController:
             if final_audio is not None:
                 self._transcribe_and_output(final_audio, OutputMode.LIVE_PASTE, live_chunk=False, session_id=session_id)
             if self._session_active(session_id):
-                self._set_state(DictationState.IDLE, "Live-Diktat beendet")
+                self._set_state(DictationState.IDLE, "Live-Diktat beendet und in Zwischenablage")
         except Exception as exc:
             if self._session_active(session_id):
                 self._set_error(exc)
@@ -260,17 +428,67 @@ class DictationController:
     def _transcribe_final(self, audio_path: Path, mode: OutputMode, session_id: int) -> None:
         try:
             if not self._session_active(session_id):
+                _unlink_audio(audio_path)
                 return
             self._transcribe_and_output(audio_path, mode, live_chunk=False, session_id=session_id)
             if self._session_active(session_id):
                 if mode == OutputMode.CLIPBOARD:
                     self._set_state(DictationState.IDLE, "Text in Zwischenablage")
                 else:
-                    self._set_state(DictationState.IDLE, "Text eingefuegt")
+                    self._set_state(DictationState.IDLE, "Text eingefuegt und in Zwischenablage")
         except Exception as exc:
             if self._session_active(session_id):
                 self._set_error(exc)
         finally:
+            if self._session_active(session_id):
+                self._disable_recording_controls()
+
+    def _transcribe_final_with_chunks(
+        self,
+        final_audio: Path | None,
+        mode: OutputMode,
+        session_id: int,
+    ) -> None:
+        try:
+            self._stop_chunk_worker(wait=True)
+            if not self._session_active(session_id):
+                if final_audio is not None:
+                    _unlink_audio(final_audio)
+                return
+
+            parts: list[str] = []
+            for result in self._chunk_results_snapshot():
+                if result.text:
+                    parts.append(result.text)
+                elif result.audio_path is not None:
+                    parts.append(self._transcribe_audio_path(result.audio_path, session_id))
+
+            if final_audio is not None:
+                parts.append(self._transcribe_audio_path(final_audio, session_id))
+
+            transcript = _join_transcript_parts(parts)
+            if not self._session_active(session_id):
+                return
+            if not transcript:
+                self._set_state(DictationState.IDLE, "Kein Text erkannt")
+                return
+
+            self._process_and_output_transcript(
+                transcript,
+                mode,
+                live_chunk=False,
+                session_id=session_id,
+            )
+            if self._session_active(session_id):
+                if mode == OutputMode.CLIPBOARD:
+                    self._set_state(DictationState.IDLE, "Text in Zwischenablage")
+                else:
+                    self._set_state(DictationState.IDLE, "Text eingefuegt und in Zwischenablage")
+        except Exception as exc:
+            if self._session_active(session_id):
+                self._set_error(exc)
+        finally:
+            self._clear_chunk_results(delete_audio=True)
             if self._session_active(session_id):
                 self._disable_recording_controls()
 
@@ -284,45 +502,61 @@ class DictationController:
         session_id = self._session_id if session_id is None else session_id
         try:
             if not self._session_active(session_id):
+                _unlink_audio(audio_path)
                 return
             if live_chunk:
                 self._publish_recording_status("Text wird verarbeitet")
-            transcript = self.transcriber.transcribe(audio_path).strip()
-            if not self._session_active(session_id):
-                return
-            if not transcript:
-                if not live_chunk:
-                    self._set_state(DictationState.IDLE, "Kein Text erkannt")
-                return
-            if (
-                self.text_processor is not None
-                and self.text_processor.will_process(mode, live_chunk)
-            ):
-                self._set_state(DictationState.TRANSCRIBING, "Text wird lokal nachkorrigiert")
-                transcript = self.text_processor.process(transcript, mode, live_chunk).strip()
-                if not self._session_active(session_id):
-                    return
-                if not transcript:
-                    if not live_chunk:
-                        self._set_state(DictationState.IDLE, "Kein Text erkannt")
-                    return
-
-            if mode == OutputMode.CLIPBOARD:
-                self._set_state(DictationState.PASTING, "Text wird in Zwischenablage gelegt")
-                self.paste_target.copy_text(transcript)
-            else:
-                text = _format_live_text(transcript) if live_chunk else transcript
-                self._restore_focus_target()
-                if not self._session_active(session_id):
-                    return
-                self.paste_target.paste_text(text)
+            transcript = self._transcribe_audio_path(audio_path, session_id)
+            self._process_and_output_transcript(transcript, mode, live_chunk, session_id)
         finally:
             if live_chunk and self._session_active(session_id):
                 self._publish_recording_status("Live-Diktat laeuft")
-            try:
-                audio_path.unlink(missing_ok=True)
-            except Exception:
-                LOG.debug("Failed to remove temporary audio file: %s", audio_path, exc_info=True)
+
+    def _transcribe_audio_path(self, audio_path: Path, session_id: int) -> str:
+        try:
+            if not self._session_active(session_id):
+                return ""
+            return self.transcriber.transcribe(audio_path).strip()
+        finally:
+            _unlink_audio(audio_path)
+
+    def _process_and_output_transcript(
+        self,
+        transcript: str,
+        mode: OutputMode,
+        live_chunk: bool,
+        session_id: int,
+    ) -> bool:
+        if not self._session_active(session_id):
+            return False
+        transcript = transcript.strip()
+        if not transcript:
+            if not live_chunk:
+                self._set_state(DictationState.IDLE, "Kein Text erkannt")
+            return False
+        if (
+            self.text_processor is not None
+            and self.text_processor.will_process(mode, live_chunk)
+        ):
+            self._set_state(DictationState.TRANSCRIBING, "Text wird lokal nachkorrigiert")
+            transcript = self.text_processor.process(transcript, mode, live_chunk).strip()
+            if not self._session_active(session_id):
+                return False
+            if not transcript:
+                if not live_chunk:
+                    self._set_state(DictationState.IDLE, "Kein Text erkannt")
+                return False
+
+        if mode == OutputMode.CLIPBOARD:
+            self._set_state(DictationState.PASTING, "Text wird in Zwischenablage gelegt")
+            self.paste_target.copy_text(transcript)
+        else:
+            text = _format_live_text(transcript) if live_chunk else transcript
+            self._restore_focus_target()
+            if not self._session_active(session_id):
+                return False
+            self.paste_target.paste_text(text)
+        return True
 
     def _restore_focus_target(self) -> None:
         if self._focus_target is not None:
@@ -368,6 +602,9 @@ class DictationController:
             self.status_callback(state, message)
 
     def _set_error(self, exc: Exception) -> None:
+        self._stop_live_worker(wait=False)
+        self._stop_chunk_worker(wait=False)
+        self._stop_level_worker(wait=False)
         self._disable_recording_controls()
         self.last_error = str(exc)
         LOG.exception("Dictation error")
@@ -381,3 +618,14 @@ def _format_live_text(text: str) -> str:
     if stripped.endswith((" ", "\n")):
         return stripped
     return stripped + " "
+
+
+def _join_transcript_parts(parts: list[str]) -> str:
+    return " ".join(part.strip() for part in parts if part and part.strip()).strip()
+
+
+def _unlink_audio(audio_path: Path) -> None:
+    try:
+        audio_path.unlink(missing_ok=True)
+    except Exception:
+        LOG.debug("Failed to remove temporary audio file: %s", audio_path, exc_info=True)

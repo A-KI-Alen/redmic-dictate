@@ -39,6 +39,9 @@ class TrayApp:
         else:
             self.overlay.hide()
 
+    def set_audio_level(self, level: float) -> None:
+        self.overlay.set_level(level)
+
     def run(self) -> None:
         try:
             import pystray

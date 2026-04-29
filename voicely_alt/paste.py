@@ -26,11 +26,12 @@ class ClipboardPaste:
                 "Clipboard paste dependencies are missing. Install requirements.txt."
             ) from exc
 
-        previous_text: str | None
-        try:
-            previous_text = pyperclip.paste()
-        except Exception:
-            previous_text = None
+        previous_text: str | None = None
+        if not self.config.keep_transcript_clipboard:
+            try:
+                previous_text = pyperclip.paste()
+            except Exception:
+                previous_text = None
 
         try:
             pyperclip.copy(text)
@@ -40,7 +41,7 @@ class ClipboardPaste:
         except Exception as exc:
             raise ClipboardPasteError("Could not paste transcript into the active window.") from exc
         finally:
-            if previous_text is not None:
+            if not self.config.keep_transcript_clipboard and previous_text is not None:
                 try:
                     pyperclip.copy(previous_text)
                 except Exception:

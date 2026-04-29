@@ -40,6 +40,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
     )
     tray = TrayApp(config, controller)
     controller.status_callback = tray.set_status
+    controller.level_callback = tray.set_audio_level
     hotkeys.start(
         controller.start_live_recording,
         controller.start_clipboard_recording,

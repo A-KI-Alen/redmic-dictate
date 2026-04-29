@@ -14,11 +14,14 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Hard-aborts with `Space+Esc` in any active state.
 - Sends the temporary WAV file to a local `whisper.cpp` server.
 - Pastes the German transcript into the currently focused input field.
+- Keeps every final transcript in the clipboard as a fallback.
 - Can locally clean up clipboard dictations with Ollama and `llama3.2:3b`.
 - Signals progress with tray status, Windows notifications, and short beeps.
-- Shows a red top-left recording HUD with the current hotkeys.
+- Shows a red top-left recording HUD with current hotkeys and a live microphone level ticker.
 - Shows a red cursor ring while recording and a rotating ring while processing.
-- Shows a translucent red bar over the Windows taskbar while recording.
+- Shows a translucent red taskbar wave driven by the live microphone level while recording.
+- Switches the taskbar wave to a heartbeat curve while processing.
+- Pre-transcribes 15-second chunks in the background to reduce the wait after stopping.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
@@ -77,10 +80,13 @@ language = "de"
 model = "auto"
 threads = "auto"
 paste_method = "clipboard"
+keep_transcript_clipboard = true
 cloud_fallback = "manual"
 silence_rms_threshold = 60
 live_streaming = false
 live_chunk_seconds = 4
+background_chunking = true
+background_chunk_seconds = 15
 beep_feedback = true
 tray_notifications = true
 recording_overlay = true
@@ -101,11 +107,12 @@ benchmark has been run yet, it falls back to `base`.
 
 - The app is Windows-first. The core is cross-platform-ready, but global hotkeys
   and paste behavior must be verified per operating system.
-- The clipboard integration restores the previous text clipboard after pasting.
-  Non-text clipboard formats are not preserved in this MVP.
+- Direct field dictation also leaves the final transcript in the clipboard. If
+  the cursor has moved while local processing runs, use `Ctrl+V` or `Windows+V`
+  to recover the text.
 - `Alt+Y` records into the active field target and inserts text after `Space`.
-  Live chunk streaming is disabled by default because CPU-local `small`
-  transcription can otherwise fall behind and destabilize the app.
+  Live field insertion is disabled by default; instead, 15-second chunks are
+  transcribed in the background and joined after `Space`.
 - `Alt+Shift+Y` records until `Space`, then copies the final transcript into the
   clipboard and plays a discreet bell sound. By default this mode also runs a
   local LLM cleanup step before copying the text.
@@ -113,8 +120,8 @@ benchmark has been run yet, it falls back to `base`.
   local processing backends, discards stale worker output, and pastes nothing.
 - LLM cleanup is not applied to direct field dictation by default. On CPU it is
   useful for quality, but too slow for immediate typing.
-- Live insertion briefly uses the text clipboard for each paste chunk and then
-  restores the previous text clipboard.
+- Live insertion uses the text clipboard and intentionally keeps the final
+  transcript there as a safety net.
 - Very quiet or empty recordings are ignored before transcription to avoid local
   Whisper silence hallucinations.
 - If the local whisper server is missing or no model has been downloaded, run

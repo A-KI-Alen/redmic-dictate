@@ -29,6 +29,8 @@ class KeyboardHotkeyManager:
         self._disable_generation = 0
         self._disable_pending = False
         self._stop_pending = False
+        self._recording_monitor_stop: threading.Event | None = None
+        self._recording_monitor_thread: threading.Thread | None = None
 
     def start(
         self,
@@ -80,15 +82,16 @@ class KeyboardHotkeyManager:
                 return
 
             self._recording_handles = [
-                self._add_suppressed_recording_key(
+                self._add_blocked_recording_key(
                     _normalize_hotkey(self.config.stop_hotkey),
                     self._handle_stop_key_down,
                 ),
-                self._add_suppressed_recording_key(
+                self._add_blocked_recording_key(
                     _normalize_hotkey(self.config.cancel_hotkey),
                     self._handle_cancel_key_down,
                 ),
             ]
+            self._start_recording_monitor_locked()
             LOG.info(
                 "Registered recording controls: stop=%s cancel=%s",
                 self.config.stop_hotkey,
@@ -119,6 +122,7 @@ class KeyboardHotkeyManager:
         self._disable_pending = False
         self._stop_pending = False
         self._disable_generation += 1
+        self._stop_recording_monitor_locked()
         for handle in self._recording_handles:
             try:
                 if callable(handle):
@@ -184,7 +188,7 @@ class KeyboardHotkeyManager:
         except Exception:
             LOG.exception("Hotkey callback failed")
 
-    def _add_suppressed_recording_key(
+    def _add_blocked_recording_key(
         self,
         hotkey: str,
         callback: Callable[[], None],
@@ -200,20 +204,56 @@ class KeyboardHotkeyManager:
                 trigger_on_release=False,
             )
 
-        return self._keyboard.hook_key(
-            hotkey,
-            lambda event: self._handle_suppressed_recording_event(event, callback),
-            suppress=True,
-        )
+        block_key = getattr(self._keyboard, "block_key", None)
+        if callable(block_key):
+            return block_key(hotkey)
+        return self._keyboard.hook_key(hotkey, lambda event: False, suppress=True)
 
-    def _handle_suppressed_recording_event(
-        self,
-        event: object,
-        callback: Callable[[], None],
-    ) -> bool:
-        if _is_key_down_event(event):
-            callback()
-        return False
+    def _start_recording_monitor_locked(self) -> None:
+        if self._recording_monitor_thread is not None and self._recording_monitor_thread.is_alive():
+            return
+
+        stop_event = threading.Event()
+        self._recording_monitor_stop = stop_event
+        self._recording_monitor_thread = threading.Thread(
+            target=self._recording_monitor_loop,
+            args=(stop_event,),
+            daemon=True,
+        )
+        self._recording_monitor_thread.start()
+
+    def _stop_recording_monitor_locked(self) -> None:
+        stop_event = self._recording_monitor_stop
+        thread = self._recording_monitor_thread
+        self._recording_monitor_stop = None
+        self._recording_monitor_thread = None
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=0.3)
+
+    def _recording_monitor_loop(self, stop_event: threading.Event) -> None:
+        last_stop_down = False
+        last_cancel_down = False
+
+        while not stop_event.wait(0.015):
+            stop_down = self._is_pressed(self.config.stop_hotkey)
+            cancel_down = self._is_pressed(self.config.cancel_hotkey)
+
+            if stop_down and cancel_down and not (last_stop_down and last_cancel_down):
+                LOG.info("Detected recording hard abort keys")
+                callback = self._on_hard_abort
+                if callback is not None:
+                    self._safe_call(callback)
+            elif stop_down and not last_stop_down:
+                LOG.info("Detected recording stop key")
+                self._handle_stop_key()
+            elif cancel_down and not last_cancel_down:
+                LOG.info("Detected recording cancel key")
+                self._handle_cancel_key()
+
+            last_stop_down = stop_down
+            last_cancel_down = cancel_down
 
     def _handle_stop_key_down(self) -> None:
         self._handle_stop_key()
@@ -270,7 +310,3 @@ def _normalize_hotkey(hotkey: str) -> str:
         else:
             parts.append(part)
     return "+".join(parts)
-
-
-def _is_key_down_event(event: object) -> bool:
-    return getattr(event, "event_type", None) == "down"

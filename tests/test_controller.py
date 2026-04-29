@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from voicely_alt.config import AppConfig
-from voicely_alt.controller import DictationController
+from voicely_alt.controller import DictationController, _ChunkResult
 from voicely_alt.state import DictationState, OutputMode
 
 
@@ -27,6 +27,9 @@ class FakeRecorder:
 
     def pop_chunk(self) -> Path | None:
         return None
+
+    def current_level(self) -> float:
+        return 0.0
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -53,6 +56,14 @@ class FakePaste:
 
     def copy_text(self, text: str) -> None:
         self.text = text
+
+
+class NamedFakeTranscriber(FakeTranscriber):
+    def transcribe(self, audio_path: Path) -> str:
+        assert audio_path.exists()
+        if audio_path.name == "final.wav":
+            return "zweiter Teil"
+        return "unbekannt"
 
 
 class FakeTextProcessor:
@@ -128,6 +139,28 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller.stop_recording())
 
             self.assertEqual(paste.text, "Hallo Welt")
+
+    def test_chunked_final_output_combines_pretranscribed_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            final_audio = Path(directory) / "final.wav"
+            final_audio.write_bytes(b"fake wav")
+            paste = FakePaste()
+            controls = FakeControls()
+            controller = DictationController(
+                config=AppConfig(background_chunking=True),
+                recorder=FakeRecorder(final_audio),
+                transcriber=NamedFakeTranscriber(),
+                paste_target=paste,
+                controls=controls,
+                background=False,
+            )
+            controller._session_id = 1
+            controller._store_chunk_result(_ChunkResult(index=0, text="erster Teil"))
+
+            controller._transcribe_final_with_chunks(final_audio, OutputMode.LIVE_PASTE, 1)
+
+            self.assertEqual(paste.text, "erster Teil zweiter Teil")
+            self.assertFalse(final_audio.exists())
 
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

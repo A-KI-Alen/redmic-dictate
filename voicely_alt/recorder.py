@@ -28,6 +28,8 @@ class AudioRecorder:
         self._lock = threading.RLock()
         self._started_at = 0.0
         self._actual_sample_rate = config.sample_rate
+        self._latest_level = 0.0
+        self._latest_level_at = 0.0
 
     def start(self) -> None:
         with self._lock:
@@ -37,6 +39,8 @@ class AudioRecorder:
             self._frames = bytearray()
             self._started_at = time.monotonic()
             self._actual_sample_rate = self.config.sample_rate
+            self._latest_level = 0.0
+            self._latest_level_at = time.monotonic()
 
             try:
                 self._stream = self._open_stream(self._actual_sample_rate)
@@ -91,6 +95,16 @@ class AudioRecorder:
         with self._lock:
             self._close_stream()
             self._frames = bytearray()
+            self._latest_level = 0.0
+
+    def current_level(self) -> float:
+        with self._lock:
+            level = float(getattr(self, "_latest_level", 0.0))
+            updated_at = float(getattr(self, "_latest_level_at", 0.0))
+            age = max(0.0, time.monotonic() - updated_at)
+            if age > 0.8:
+                return 0.0
+            return max(0.0, min(1.0, level * max(0.0, 1.0 - age / 0.8)))
 
     def _open_stream(self, sample_rate: int):
         import sounddevice as sd
@@ -110,8 +124,14 @@ class AudioRecorder:
 
     def _callback(self, indata, frames, time_info, status) -> None:
         del frames, time_info, status
+        data = bytes(indata)
+        rms = pcm16_rms(data)
+        level = min(1.0, rms / 5000.0)
         with self._lock:
-            self._frames.extend(bytes(indata))
+            self._frames.extend(data)
+            previous = float(getattr(self, "_latest_level", 0.0))
+            self._latest_level = max(level, previous * 0.72)
+            self._latest_level_at = time.monotonic()
 
     def _close_stream(self) -> None:
         if self._stream is None:

@@ -8,9 +8,8 @@ zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
 
 ## Tastenkombinationen
 
-- `Alt+Y`: Live-Diktat starten. Der erkannte Text wird waehrend der Aufnahme in
-  das aktive Eingabefeld eingefuegt. Der stabile Standard transkribiert nach dem
-  Stoppen, nicht mehr waehrend der laufenden Aufnahme.
+- `Alt+Y`: Direkt-Diktat starten. Der stabile Standard transkribiert nach dem
+  Stoppen und fuegt den fertigen Text in das aktive Eingabefeld ein.
 - `Alt+Shift+Y`: Aufnahme fuer die Zwischenablage starten. Nach dem Stoppen wird
   der ganze Text in die Zwischenablage kopiert.
 - `Space`: Aufnahme stoppen.
@@ -19,10 +18,14 @@ zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
   sofort, verwirft die laufende Sitzung und fuegt keinen Text ein.
 
 Wenn die Aufnahme laeuft, siehst du oben links ein rotes Statusfeld mit den
-aktuellen Tastenkombinationen und eine rote Markierung ueber der
-Windows-Taskleiste. Am Mauszeiger erscheint ein roter Ring; waehrend Text
-transkribiert oder nachkorrigiert wird, dreht sich dieser Ring. Wenn ein Text
-erfolgreich in der Zwischenablage liegt, spielt das Tool ein dezentes
+aktuellen Tastenkombinationen und einer laufenden Mikrofon-Pegelanzeige. Dazu
+kommt eine rote Wave-Leiste ueber der Windows-Taskleiste, die live dem
+Mikrofonpegel folgt. Sobald die Aufnahme stoppt und verarbeitet wird, wechselt
+die Leiste auf eine Herzschlag-Kurve. Am Mauszeiger erscheint
+ein roter Ring; waehrend Text transkribiert oder nachkorrigiert wird, dreht sich
+dieser Ring. Jeder fertige Text bleibt zusaetzlich in der Zwischenablage, damit
+du ihn bei Bedarf mit `Ctrl+V` oder `Windows+V` wieder einfuegen kannst. Wenn
+ein Text erfolgreich in der Zwischenablage liegt, spielt das Tool ein dezentes
 Glockensignal.
 
 ## Installation
@@ -79,6 +82,9 @@ Autostart wieder entfernen:
 3. Sprich den Text.
 4. Druecke `Space`, um zu stoppen.
 
+Der fertige Text wird eingefuegt und bleibt gleichzeitig als Sicherung in der
+Zwischenablage.
+
 Fuer die Zwischenablage:
 
 1. Druecke `Alt+Shift+Y`.
@@ -108,8 +114,11 @@ model = "auto"
 selected_model = "small"
 live_streaming = false
 live_chunk_seconds = 4
+background_chunking = true
+background_chunk_seconds = 15
 recording_overlay = true
 taskbar_recording_overlay = true
+keep_transcript_clipboard = true
 beep_feedback = true
 tray_notifications = true
 transcript_cleanup = "clipboard"
@@ -125,11 +134,15 @@ Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
 Standard fuer bessere Qualitaet ist jetzt `small`. Es ist langsamer als `base`,
 erkennt aber deutsche Diktate meist sauberer.
 
+RedMic transkribiert waehrend der Aufnahme alle 15 Sekunden einen Audio-Chunk im
+Hintergrund. Nach `Space` muss dadurch nur noch der letzte Rest verarbeitet und
+alles zusammengesetzt werden.
+
 Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
 also fuer die Zwischenablage. `Alt+Y` ist im stabilen Standard ein
 Direkt-Diktat: aufnehmen, stoppen, dann einmal transkribieren und einfuegen.
-Das vermeidet, dass lokale CPU-Transkription waehrend langer Aufnahmen in eine
-Warteschlange kippt.
+Das vermeidet Live-Einfuegen waehrend du noch sprichst, nutzt aber trotzdem
+Hintergrund-Chunking fuer kuerzere Wartezeit nach dem Stoppen.
 
 Fuer einen automatischen Modellvergleich:
 
@@ -148,7 +161,8 @@ funktionierende Modell.
 - Es erscheint kein rotes Mikrofon:
   Pruefe, ob `recording_overlay = true` gesetzt ist.
 - Der Text wird nicht eingefuegt:
-  Stelle sicher, dass vorher ein Eingabefeld fokussiert war.
+  Stelle sicher, dass vorher ein Eingabefeld fokussiert war. Der fertige Text
+  bleibt trotzdem in der Zwischenablage und kann mit `Ctrl+V` eingefuegt werden.
 - Die Zwischenablage enthaelt keinen Text:
   Sprich lauter oder laenger. Sehr leise Aufnahmen werden absichtlich ignoriert,
   damit Whisper keine Halluzinationen aus Stille erzeugt.
