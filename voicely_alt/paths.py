@@ -3,11 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 
-APP_DIR_NAME = ".voicely_alt"
+APP_DIR_NAME = ".redmic_dictate"
+LEGACY_APP_DIR_NAME = ".voicely_alt"
 
 
 def app_dir() -> Path:
     path = Path.home() / APP_DIR_NAME
+    legacy_path = Path.home() / LEGACY_APP_DIR_NAME
+    if not path.exists() and legacy_path.exists():
+        try:
+            legacy_path.rename(path)
+        except OSError:
+            return legacy_path
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -48,4 +55,3 @@ def logs_dir() -> Path:
 
 def benchmark_sample_path() -> Path:
     return app_dir() / "benchmark_sample.wav"
-

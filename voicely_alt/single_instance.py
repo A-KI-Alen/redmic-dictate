@@ -11,7 +11,7 @@ class AlreadyRunningError(RuntimeError):
 
 
 class SingleInstance:
-    def __init__(self, name: str = "voicely_alt.lock"):
+    def __init__(self, name: str = "redmic_dictate.lock"):
         self.path = app_dir() / name
         self._handle = None
         self._mutex = None
@@ -50,11 +50,11 @@ class SingleInstance:
         kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
         kernel32.CreateMutexW.restype = wintypes.HANDLE
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        mutex = kernel32.CreateMutexW(None, True, "Local\\VoicelyAltSingleInstance")
+        mutex = kernel32.CreateMutexW(None, True, "Local\\RedMicDictateSingleInstance")
         if not mutex:
-            raise AlreadyRunningError("Could not create Voicely Alt instance mutex.")
+            raise AlreadyRunningError("Could not create RedMic Dictate instance mutex.")
         already_exists = ctypes.get_last_error() == 183
         if already_exists:
             kernel32.CloseHandle(mutex)
-            raise AlreadyRunningError("Voicely Alt is already running.")
+            raise AlreadyRunningError("RedMic Dictate is already running.")
         self._mutex = mutex

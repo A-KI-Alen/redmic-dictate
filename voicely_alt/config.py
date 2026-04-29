@@ -34,10 +34,10 @@ class AppConfig:
     beep_feedback: bool = True
     tray_notifications: bool = True
     recording_overlay: bool = True
-    overlay_size: int = 96
+    overlay_size: int = 72
     taskbar_recording_overlay: bool = True
-    taskbar_overlay_height: int = 56
-    taskbar_overlay_alpha: float = 0.45
+    taskbar_overlay_height: int = 22
+    taskbar_overlay_alpha: float = 0.90
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AppConfig":

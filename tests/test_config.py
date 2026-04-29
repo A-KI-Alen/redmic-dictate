@@ -19,9 +19,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.language, "de")
         self.assertEqual(config.cloud_fallback, "manual")
         self.assertTrue(config.recording_overlay)
-        self.assertEqual(config.overlay_size, 96)
+        self.assertEqual(config.overlay_size, 72)
         self.assertTrue(config.taskbar_recording_overlay)
-        self.assertEqual(config.taskbar_overlay_height, 56)
+        self.assertEqual(config.taskbar_overlay_height, 22)
 
     def test_config_roundtrip(self) -> None:
         import tempfile

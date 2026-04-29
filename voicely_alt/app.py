@@ -15,7 +15,7 @@ from .whispercpp import WhisperCppServerManager, WhisperCppTranscriber
 
 
 def configure_logging() -> None:
-    log_file = logs_dir() / "voicely-alt.log"
+    log_file = logs_dir() / "redmic-dictate.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -55,7 +55,7 @@ def run_app(no_tray: bool = False) -> None:
             controller, hotkeys, tray = build_app(config)
             try:
                 if no_tray:
-                    print("Voicely Alt is running. Press Win+Alt+Space for live dictation.")
+                    print("RedMic Dictate is running. Press Alt+Y for live dictation.")
                     hotkeys.wait()
                 else:
                     tray.run()
@@ -63,4 +63,4 @@ def run_app(no_tray: bool = False) -> None:
                 controller.shutdown()
                 hotkeys.stop()
     except AlreadyRunningError:
-        logging.info("Voicely Alt is already running; exiting duplicate instance.")
+        logging.info("RedMic Dictate is already running; exiting duplicate instance.")

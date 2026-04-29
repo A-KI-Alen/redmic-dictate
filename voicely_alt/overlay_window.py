@@ -31,35 +31,29 @@ def run_overlay(config: AppConfig) -> None:
     import tkinter as tk
 
     size = max(48, int(config.overlay_size))
-    transparent = "#ff00ff"
 
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.configure(bg=transparent)
-    try:
-        root.attributes("-transparentcolor", transparent)
-    except tk.TclError:
-        root.attributes("-alpha", 0.92)
+    root.attributes("-alpha", 0.95)
+    root.configure(bg="#e11932")
 
-    canvas = tk.Canvas(root, width=size, height=size, bg=transparent, highlightthickness=0)
+    canvas = tk.Canvas(root, width=size, height=size, bg="#e11932", highlightthickness=0)
     canvas.pack()
-    draw_microphone(canvas, size)
+    draw_cursor_halo(canvas, size)
     root.update_idletasks()
     make_click_through(root)
 
-    taskbar = create_taskbar_overlay(root, config)
-    if taskbar is not None:
-        place_taskbar_overlay(taskbar, config)
+    taskbars = create_taskbar_overlays(root, config)
+    for taskbar in taskbars:
         taskbar.deiconify()
         taskbar.update_idletasks()
         make_click_through(taskbar)
 
     def follow_cursor() -> None:
         point = cursor_position(root)
-        root.geometry(f"{size}x{size}+{point.x - size // 2}+{point.y - size // 2}")
-        root.lift()
-        if taskbar is not None:
+        move_window(root, point.x - size // 2, point.y - size // 2, size, size)
+        for taskbar in taskbars:
             taskbar.lift()
         root.after(35, follow_cursor)
 
@@ -67,74 +61,77 @@ def run_overlay(config: AppConfig) -> None:
     root.mainloop()
 
 
-def draw_microphone(canvas, size: int) -> None:
-    pad = max(5, size // 14)
+def draw_cursor_halo(canvas, size: int) -> None:
+    pad = max(4, size // 12)
     red = "#e11932"
-    dark = "#9f1022"
     white = "#ffffff"
-    line = max(3, size // 18)
+    line = max(4, size // 11)
 
-    canvas.create_oval(pad, pad, size - pad, size - pad, fill=red, outline=dark, width=max(2, size // 32))
-
-    mic_w = size * 0.26
-    mic_h = size * 0.42
-    x1 = (size - mic_w) / 2
-    y1 = size * 0.20
-    x2 = x1 + mic_w
-    y2 = y1 + mic_h
-    radius = mic_w / 2
-
-    canvas.create_rectangle(x1, y1 + radius, x2, y2 - radius, fill=white, outline=white)
-    canvas.create_oval(x1, y1, x2, y1 + mic_w, fill=white, outline=white)
-    canvas.create_oval(x1, y2 - mic_w, x2, y2, fill=white, outline=white)
-    canvas.create_arc(
-        size * 0.30,
-        size * 0.40,
-        size * 0.70,
-        size * 0.70,
-        start=180,
-        extent=180,
-        style="arc",
-        outline=white,
-        width=line,
-    )
-    canvas.create_line(size * 0.50, size * 0.70, size * 0.50, size * 0.82, fill=white, width=line)
-    canvas.create_line(size * 0.39, size * 0.82, size * 0.61, size * 0.82, fill=white, width=line)
+    canvas.create_rectangle(0, 0, size, size, fill=red, outline=red)
+    canvas.create_oval(pad, pad, size - pad, size - pad, outline=white, width=line)
+    canvas.create_line(size / 2, 0, size / 2, size * 0.28, fill=white, width=max(3, size // 18))
+    canvas.create_line(size / 2, size * 0.72, size / 2, size, fill=white, width=max(3, size // 18))
+    canvas.create_line(0, size / 2, size * 0.28, size / 2, fill=white, width=max(3, size // 18))
+    canvas.create_line(size * 0.72, size / 2, size, size / 2, fill=white, width=max(3, size // 18))
+    canvas.create_text(size / 2, size / 2, text="MIC", fill=white, font=("Segoe UI", max(9, size // 7), "bold"))
 
 
-def create_taskbar_overlay(root, config: AppConfig):
+def create_taskbar_overlays(root, config: AppConfig) -> list:
     if not config.taskbar_recording_overlay:
-        return None
+        return []
 
     import tkinter as tk
 
-    window = tk.Toplevel(root)
-    window.overrideredirect(True)
-    window.attributes("-topmost", True)
-    window.attributes("-alpha", max(0.15, min(0.95, float(config.taskbar_overlay_alpha))))
-    window.configure(bg="#e11932")
-    return window
+    overlays = []
+    for left, top, right, bottom in monitor_rects(root):
+        height = max(8, int(config.taskbar_overlay_height))
+        window = tk.Toplevel(root)
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.attributes("-alpha", max(0.15, min(0.95, float(config.taskbar_overlay_alpha))))
+        window.configure(bg="#e11932")
+        window.geometry(f"{right - left}x{height}+{left}+{bottom - height}")
+        overlays.append(window)
+    return overlays
 
 
-def place_taskbar_overlay(window, config: AppConfig) -> None:
-    height = max(24, int(config.taskbar_overlay_height))
+def monitor_rects(root) -> list[tuple[int, int, int, int]]:
     if os.name == "nt":
         try:
             import ctypes
+            from ctypes import wintypes
 
             user32 = ctypes.windll.user32
-            left = user32.GetSystemMetrics(76)
-            top = user32.GetSystemMetrics(77)
-            width = user32.GetSystemMetrics(78)
-            total_height = user32.GetSystemMetrics(79)
-            window.geometry(f"{width}x{height}+{left}+{top + total_height - height}")
-            return
-        except Exception:
-            LOG.debug("Could not read virtual screen metrics", exc_info=True)
+            rects: list[tuple[int, int, int, int]] = []
 
-    width = window.winfo_screenwidth()
-    total_height = window.winfo_screenheight()
-    window.geometry(f"{width}x{height}+0+{total_height - height}")
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            MONITORENUMPROC = ctypes.WINFUNCTYPE(
+                wintypes.BOOL,
+                wintypes.HMONITOR,
+                wintypes.HDC,
+                ctypes.POINTER(RECT),
+                wintypes.LPARAM,
+            )
+
+            def callback(monitor, hdc, rect, data):
+                del monitor, hdc, data
+                rects.append((rect.contents.left, rect.contents.top, rect.contents.right, rect.contents.bottom))
+                return True
+
+            user32.EnumDisplayMonitors(0, 0, MONITORENUMPROC(callback), 0)
+            if rects:
+                return rects
+        except Exception:
+            LOG.debug("Could not enumerate monitors", exc_info=True)
+
+    return [(0, 0, root.winfo_screenwidth(), root.winfo_screenheight())]
 
 
 def cursor_position(root) -> Point:
@@ -151,6 +148,29 @@ def cursor_position(root) -> Point:
         except Exception:
             LOG.debug("GetCursorPos failed", exc_info=True)
     return Point(root.winfo_pointerx(), root.winfo_pointery())
+
+
+def move_window(window, x: int, y: int, width: int, height: int) -> None:
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            hwnd_topmost = -1
+            swp_noactivate = 0x0010
+            swp_showwindow = 0x0040
+            ctypes.windll.user32.SetWindowPos(
+                window.winfo_id(),
+                hwnd_topmost,
+                int(x),
+                int(y),
+                int(width),
+                int(height),
+                swp_noactivate | swp_showwindow,
+            )
+            return
+        except Exception:
+            LOG.debug("SetWindowPos failed", exc_info=True)
+    window.geometry(f"{width}x{height}+{x}+{y}")
 
 
 def make_click_through(root) -> None:
@@ -172,4 +192,3 @@ def make_click_through(root) -> None:
 
 if __name__ == "__main__":
     main()
-

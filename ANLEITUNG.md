@@ -1,6 +1,6 @@
-# Voicely Alternative Anleitung
+# RedMic Dictate Anleitung
 
-Voicely Alternative ist ein lokales Diktier-Tool fuer Windows. Es laeuft im
+RedMic Dictate ist ein lokales Diktier-Tool fuer Windows. Es laeuft im
 Hintergrund, nimmt per Tastenkombination Sprache auf, transkribiert lokal mit
 `whisper.cpp` und schreibt den Text entweder direkt in das aktive Eingabefeld
 oder legt ihn in die Zwischenablage.
@@ -74,7 +74,7 @@ Fuer die Zwischenablage:
 Die aktive Konfiguration liegt hier:
 
 ```text
-C:\Users\AE\.voicely_alt\config.toml
+C:\Users\AE\.redmic_dictate\config.toml
 ```
 
 Wichtige Werte:
@@ -125,4 +125,3 @@ funktionierende Modell.
   damit Whisper keine Halluzinationen aus Stille erzeugt.
 - Lokale Transkription startet nicht:
   Fuehre `.\scripts\setup.ps1 -Model base` erneut aus.
-

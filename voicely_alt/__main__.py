@@ -13,7 +13,7 @@ from .whispercpp import WhisperCppTranscriber
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="voicely-alt")
+    parser = argparse.ArgumentParser(prog="redmic-dictate")
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run the tray dictation app")

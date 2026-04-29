@@ -125,7 +125,7 @@ class AudioRecorder:
 
     def _write_wav(self, frames: bytes) -> Path:
         descriptor, name = tempfile.mkstemp(
-            prefix="voicely_alt_",
+            prefix="redmic_dictate_",
             suffix=".wav",
             dir=temp_dir(),
         )

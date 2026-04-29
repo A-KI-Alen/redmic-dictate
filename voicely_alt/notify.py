@@ -31,8 +31,6 @@ class UserNotifier:
         if not body:
             return
 
-        # Avoid notification bursts when a fast transcription passes through
-        # TRANSCRIBING -> PASTING -> IDLE in a fraction of a second.
         now = time.monotonic()
         if state not in {DictationState.IDLE, DictationState.ERROR} and now - self._last_notification < 0.8:
             return
@@ -47,14 +45,14 @@ class UserNotifier:
 
 def _notification_text(state: DictationState, message: str) -> tuple[str, str]:
     if state == DictationState.RECORDING:
-        return "Voicely Alt", "Aufnahme läuft. Leertaste stoppt, Esc bricht ab."
+        return "RedMic Dictate", "Aufnahme laeuft. Leertaste stoppt, Esc bricht ab."
     if state == DictationState.TRANSCRIBING:
-        return "Voicely Alt", "Transkription läuft."
+        return "RedMic Dictate", "Transkription laeuft."
     if state == DictationState.IDLE and message:
-        return "Voicely Alt", message
+        return "RedMic Dictate", message
     if state == DictationState.ERROR:
-        return "Voicely Alt Fehler", message
-    return "Voicely Alt", ""
+        return "RedMic Dictate Fehler", message
+    return "RedMic Dictate", ""
 
 
 def _beep_for_status(state: DictationState, message: str) -> None:
@@ -78,3 +76,4 @@ def _beep_for_status(state: DictationState, message: str) -> None:
             winsound.Beep(220, 180)
     except Exception:
         LOG.debug("Beep feedback failed", exc_info=True)
+

@@ -10,6 +10,7 @@ from .config import AppConfig
 from .controller import DictationController
 from .notify import UserNotifier
 from .overlay import RecordingOverlay
+from .paths import config_path
 from .state import DictationState
 
 
@@ -21,12 +22,12 @@ class TrayApp:
         self.config = config
         self.controller = controller
         self.icon = None
-        self.title = "Voicely Alt: Ready"
+        self.title = "RedMic Dictate: Ready"
         self.notifier = UserNotifier(config)
         self.overlay = RecordingOverlay(config)
 
     def set_status(self, state: DictationState, message: str) -> None:
-        self.title = f"Voicely Alt: {message or state.value}"
+        self.title = f"RedMic Dictate: {message or state.value}"
         if self.icon is not None:
             self.icon.title = self.title
         self.notifier.on_status(state, message)
@@ -49,7 +50,7 @@ class TrayApp:
         draw.rectangle((20, 52, 44, 58), fill=(80, 180, 140))
 
         self.icon = pystray.Icon(
-            "voicely_alt",
+            "redmic_dictate",
             image,
             self.title,
             menu=pystray.Menu(
@@ -58,7 +59,7 @@ class TrayApp:
                 pystray.MenuItem("Stop Recording", lambda: self.controller.stop_recording()),
                 pystray.MenuItem("Cancel Recording", lambda: self.controller.cancel_recording()),
                 pystray.MenuItem("Benchmark Models", lambda: self.controller.benchmark()),
-                pystray.MenuItem("Settings", lambda: _open_path(Path.home() / ".voicely_alt" / "config.toml")),
+                pystray.MenuItem("Settings", lambda: _open_path(config_path())),
                 pystray.MenuItem("Quit", self._quit),
             ),
         )

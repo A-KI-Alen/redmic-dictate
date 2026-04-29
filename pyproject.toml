@@ -1,5 +1,5 @@
 [project]
-name = "voicely-alt"
+name = "redmic-dictate"
 version = "0.1.0"
 description = "Local-first desktop dictation with global hotkeys and whisper.cpp"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-voicely-alt = "voicely_alt.__main__:main"
+redmic-dictate = "voicely_alt.__main__:main"
 
 [build-system]
 requires = ["setuptools>=70", "wheel"]
@@ -20,4 +20,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["voicely_alt*"]
-

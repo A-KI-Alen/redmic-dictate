@@ -40,14 +40,14 @@ class WhisperCppServerManager:
         executable = find_whisper_executable("server")
         if executable is None:
             raise TranscriptionError(
-                "whisper-server was not found. Run: python -m voicely_alt setup --model base"
+                "whisper-server was not found. Run: redmic-dictate setup --model base"
             )
 
         model = self.config.resolved_model()
         model_file = model_path(model)
         if not model_file.exists():
             raise TranscriptionError(
-                f"Local model '{model}' is missing. Run: python -m voicely_alt setup --model {model}"
+                f"Local model '{model}' is missing. Run: redmic-dictate setup --model {model}"
             )
 
         self._start_process(executable, model_file)
@@ -146,7 +146,7 @@ def prepare_local_runtime(config: AppConfig, model: str) -> None:
 
 
 def _post_multipart(url: str, fields: dict[str, str], files: dict[str, Path]) -> bytes:
-    boundary = "----voicely-alt-" + uuid.uuid4().hex
+    boundary = "----redmic-dictate-" + uuid.uuid4().hex
     body = bytearray()
 
     for name, value in fields.items():
@@ -175,7 +175,7 @@ def _post_multipart(url: str, fields: dict[str, str], files: dict[str, Path]) ->
         data=bytes(body),
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "voicely-alt",
+            "User-Agent": "redmic-dictate",
         },
         method="POST",
     )

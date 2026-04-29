@@ -1,4 +1,4 @@
-# Voicely Alternative
+# RedMic Dictate
 
 Local-first dictation for Windows with a global recording hotkey and offline
 transcription through `whisper.cpp`.
@@ -26,7 +26,7 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 .\scripts\start.ps1
 ```
 
-To start Voicely Alternative automatically when you log in to Windows:
+To start RedMic Dictate automatically when you log in to Windows:
 
 ```powershell
 .\scripts\install_autostart.ps1
@@ -39,7 +39,7 @@ To remove autostart again:
 ```
 
 The setup command downloads the latest Windows x64 `whisper.cpp` release and the
-selected multilingual model into `%USERPROFILE%\.voicely_alt`.
+selected multilingual model into `%USERPROFILE%\.redmic_dictate`.
 
 For better local model selection, record a short German benchmark sample and let
 the app test `tiny`, `base`, and `small`:
@@ -53,7 +53,7 @@ the app test `tiny`, `base`, and `small`:
 The config file is created at:
 
 ```text
-%USERPROFILE%\.voicely_alt\config.toml
+%USERPROFILE%\.redmic_dictate\config.toml
 ```
 
 Default values:
@@ -75,10 +75,10 @@ live_chunk_seconds = 4
 beep_feedback = true
 tray_notifications = true
 recording_overlay = true
-overlay_size = 96
+overlay_size = 72
 taskbar_recording_overlay = true
-taskbar_overlay_height = 56
-taskbar_overlay_alpha = 0.45
+taskbar_overlay_height = 22
+taskbar_overlay_alpha = 0.90
 ```
 
 When `model = "auto"`, the app uses the benchmark-selected model. If no
@@ -100,4 +100,4 @@ benchmark has been run yet, it falls back to `base`.
 - Very quiet or empty recordings are ignored before transcription to avoid local
   Whisper silence hallucinations.
 - If the local whisper server is missing or no model has been downloaded, run
-  `python -m voicely_alt setup --model base`.
+  `.\scripts\setup.ps1 -Model base`.

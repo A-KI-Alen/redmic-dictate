@@ -46,7 +46,7 @@ def install_whispercpp(prefer_blas: bool = False) -> Path:
     if platform.system().lower() != "windows":
         raise SetupError(
             "Automatic whisper.cpp installation is currently implemented for Windows. "
-            "Install whisper.cpp manually and place whisper-server on PATH or in ~/.voicely_alt/runtime."
+            "Install whisper.cpp manually and place whisper-server on PATH or in ~/.redmic_dictate/runtime."
         )
 
     release = _latest_release()
@@ -94,7 +94,7 @@ def find_whisper_executable(kind: str) -> Path | None:
 def download_file(url: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".download")
-    request = urllib.request.Request(url, headers={"User-Agent": "voicely-alt"})
+    request = urllib.request.Request(url, headers={"User-Agent": "redmic-dictate"})
     with urllib.request.urlopen(request, timeout=120) as response:
         with tmp.open("wb") as handle:
             shutil.copyfileobj(response, handle)
@@ -102,7 +102,7 @@ def download_file(url: str, target: Path) -> None:
 
 
 def _latest_release() -> dict:
-    request = urllib.request.Request(RELEASE_API_URL, headers={"User-Agent": "voicely-alt"})
+    request = urllib.request.Request(RELEASE_API_URL, headers={"User-Agent": "redmic-dictate"})
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -127,4 +127,3 @@ def _select_windows_asset(release: dict, prefer_blas: bool) -> dict | None:
         if "win" in lowered and "x64" in lowered and lowered.endswith(".zip"):
             return asset
     return None
-
