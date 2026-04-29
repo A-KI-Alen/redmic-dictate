@@ -173,6 +173,7 @@ class DictationController:
                 if self._chunk_worker_active():
                     self._request_chunk_worker_stop()
                     final_audio = self.recorder.stop_if_audio()
+                    self._stop_quality_worker(wait=False, close_backend=True)
                     if mode == OutputMode.CLIPBOARD:
                         self._set_state(DictationState.TRANSCRIBING, "Transkription fuer Zwischenablage laeuft")
                     else:

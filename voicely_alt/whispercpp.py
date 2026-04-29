@@ -14,7 +14,7 @@ from pathlib import Path
 from .audio import is_silent_wav
 from .config import AppConfig
 from .installer import ensure_model, find_whisper_executable, model_path
-from .paths import logs_dir
+from .paths import logs_dir, whispercpp_dir
 
 
 LOG = logging.getLogger(__name__)
@@ -35,13 +35,15 @@ class WhisperCppServerManager:
         return f"http://{self.config.host}:{self.config.port}"
 
     def ensure_running(self) -> None:
-        if self.is_running():
+        if self.process is not None and self.is_running():
             return
+        if self.process is not None and self.process.poll() is None:
+            self.stop()
 
         if _port_is_open(self.config.host, self.config.port):
             new_port = _find_free_port(self.config.host, start=max(18080, int(self.config.port) + 1))
             LOG.warning(
-                "Port %s is occupied by a non-whisper service; switching whisper.cpp to %s",
+                "Port %s is occupied by another service; switching whisper.cpp to %s",
                 self.config.port,
                 new_port,
             )
@@ -156,6 +158,39 @@ class WhisperCppTranscriber:
 def prepare_local_runtime(config: AppConfig, model: str) -> None:
     del config
     ensure_model(model)
+
+
+def stop_stale_whisper_servers() -> None:
+    if os.name != "nt":
+        return
+
+    runtime = str(whispercpp_dir())
+    script = """
+$runtime = $args[0]
+Get-CimInstance Win32_Process -Filter "name = 'whisper-server.exe'" |
+    Where-Object { $_.CommandLine -like "*$runtime*" -or $_.CommandLine -like "*.redmic_dictate*" } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+"""
+    try:
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+                runtime,
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except Exception:
+        LOG.debug("Could not stop stale whisper.cpp servers", exc_info=True)
 
 
 def _post_multipart(url: str, fields: dict[str, str], files: dict[str, Path]) -> bytes:

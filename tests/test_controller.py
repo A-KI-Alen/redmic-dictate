@@ -193,7 +193,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(paste.text, "small block base vier")
 
-    def test_quality_chunking_queues_15_second_groups(self) -> None:
+    def test_quality_chunking_queues_configured_groups(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paste = FakePaste()
             controller = DictationController(
@@ -224,6 +224,25 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(controller._quality_pending_chunks, [])
             finally:
                 work.audio_path.unlink(missing_ok=True)
+
+    def test_stop_recording_closes_quality_worker_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "audio.wav"
+            quality = FakeTranscriber()
+            controller = DictationController(
+                config=AppConfig(background_chunking=True, quality_chunking=True),
+                recorder=FakeRecorder(audio_path),
+                transcriber=FakeTranscriber(),
+                quality_transcriber=quality,
+                paste_target=FakePaste(),
+                controls=FakeControls(),
+                background=False,
+            )
+
+            self.assertTrue(controller.start_live_recording())
+            self.assertTrue(controller.stop_recording())
+
+            self.assertTrue(quality.closed)
 
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

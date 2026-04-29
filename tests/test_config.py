@@ -31,7 +31,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.background_chunk_seconds, 5)
         self.assertTrue(config.quality_chunking)
         self.assertEqual(config.quality_model, "small")
-        self.assertEqual(config.quality_chunk_seconds, 15)
+        self.assertEqual(config.quality_chunk_seconds, 10)
         self.assertEqual(config.quality_wait_after_stop_seconds, 1.5)
         self.assertEqual(config.transcript_cleanup, "clipboard")
         self.assertEqual(config.cleanup_backend, "ollama")

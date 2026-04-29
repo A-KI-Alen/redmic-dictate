@@ -13,7 +13,7 @@ from .paste import ClipboardPaste
 from .recorder import AudioRecorder
 from .single_instance import AlreadyRunningError, SingleInstance
 from .tray import TrayApp
-from .whispercpp import WhisperCppServerManager, WhisperCppTranscriber
+from .whispercpp import WhisperCppServerManager, WhisperCppTranscriber, stop_stale_whisper_servers
 
 
 def configure_logging() -> None:
@@ -69,6 +69,7 @@ def run_app(no_tray: bool = False) -> None:
     configure_logging()
     try:
         with SingleInstance():
+            stop_stale_whisper_servers()
             config = AppConfig.load_or_create()
             controller, hotkeys, tray = build_app(config)
             try:
