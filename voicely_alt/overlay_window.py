@@ -33,16 +33,13 @@ def run_overlay(config: AppConfig) -> None:
     size = max(48, int(config.overlay_size))
 
     root = tk.Tk()
-    root.overrideredirect(True)
-    root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.95)
-    root.configure(bg="#e11932")
-
-    canvas = tk.Canvas(root, width=size, height=size, bg="#e11932", highlightthickness=0)
-    canvas.pack()
-    draw_cursor_halo(canvas, size)
+    root.withdraw()
     root.update_idletasks()
-    make_click_through(root)
+
+    cursor = create_cursor_overlay(root, size)
+    cursor.deiconify()
+    cursor.update_idletasks()
+    make_click_through(cursor)
 
     taskbars = create_taskbar_overlays(root, config)
     for taskbar in taskbars:
@@ -52,13 +49,28 @@ def run_overlay(config: AppConfig) -> None:
 
     def follow_cursor() -> None:
         point = cursor_position(root)
-        move_window(root, point.x - size // 2, point.y - size // 2, size, size)
+        move_window(cursor, point.x - size // 2, point.y - size // 2, size, size)
         for taskbar in taskbars:
             taskbar.lift()
+        cursor.lift()
         root.after(35, follow_cursor)
 
     root.after(0, follow_cursor)
     root.mainloop()
+
+
+def create_cursor_overlay(root, size: int):
+    import tkinter as tk
+
+    window = tk.Toplevel(root)
+    window.overrideredirect(True)
+    window.attributes("-topmost", True)
+    window.attributes("-alpha", 0.92)
+    window.configure(bg="#e11932")
+    canvas = tk.Canvas(window, width=size, height=size, bg="#e11932", highlightthickness=0)
+    canvas.pack()
+    draw_cursor_halo(canvas, size)
+    return window
 
 
 def draw_cursor_halo(canvas, size: int) -> None:
@@ -73,7 +85,7 @@ def draw_cursor_halo(canvas, size: int) -> None:
     canvas.create_line(size / 2, size * 0.72, size / 2, size, fill=white, width=max(3, size // 18))
     canvas.create_line(0, size / 2, size * 0.28, size / 2, fill=white, width=max(3, size // 18))
     canvas.create_line(size * 0.72, size / 2, size, size / 2, fill=white, width=max(3, size // 18))
-    canvas.create_text(size / 2, size / 2, text="MIC", fill=white, font=("Segoe UI", max(9, size // 7), "bold"))
+    canvas.create_text(size / 2, size / 2, text="REC", fill=white, font=("Segoe UI", max(9, size // 7), "bold"))
 
 
 def create_taskbar_overlays(root, config: AppConfig) -> list:
