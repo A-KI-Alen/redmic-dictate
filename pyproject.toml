@@ -1,0 +1,23 @@
+[project]
+name = "voicely-alt"
+version = "0.1.0"
+description = "Local-first desktop dictation with global hotkeys and whisper.cpp"
+requires-python = ">=3.11"
+dependencies = [
+  "keyboard>=0.13.5",
+  "pyperclip>=1.9.0",
+  "sounddevice>=0.5.1",
+  "pystray>=0.19.5",
+  "Pillow>=10.4.0",
+]
+
+[project.scripts]
+voicely-alt = "voicely_alt.__main__:main"
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["voicely_alt*"]
+
