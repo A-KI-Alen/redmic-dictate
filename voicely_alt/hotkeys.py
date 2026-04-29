@@ -21,11 +21,14 @@ class KeyboardHotkeyManager:
         self._keyboard = None
         self._start_handles: list[object] = []
         self._recording_handles: list[object] = []
+        self._hard_abort_handle: object | None = None
         self._lock = threading.RLock()
         self._on_stop: Callable[[], None] | None = None
         self._on_cancel: Callable[[], None] | None = None
+        self._on_hard_abort: Callable[[], None] | None = None
         self._disable_generation = 0
         self._disable_pending = False
+        self._stop_pending = False
 
     def start(
         self,
@@ -33,6 +36,7 @@ class KeyboardHotkeyManager:
         on_clipboard_start: Callable[[], None],
         on_stop: Callable[[], None],
         on_cancel: Callable[[], None],
+        on_hard_abort: Callable[[], None],
     ) -> None:
         try:
             import keyboard
@@ -43,6 +47,7 @@ class KeyboardHotkeyManager:
             self._keyboard = keyboard
             self._on_stop = on_stop
             self._on_cancel = on_cancel
+            self._on_hard_abort = on_hard_abort
             self._start_handles = [
                 keyboard.add_hotkey(
                     _normalize_hotkey(self.config.live_hotkey),
@@ -57,8 +62,15 @@ class KeyboardHotkeyManager:
                     trigger_on_release=False,
                 ),
             ]
+            self._hard_abort_handle = keyboard.add_hotkey(
+                _normalize_hotkey(self.config.hard_abort_hotkey),
+                lambda: self._safe_call(on_hard_abort),
+                suppress=True,
+                trigger_on_release=False,
+            )
             LOG.info("Registered live hotkey: %s", self.config.live_hotkey)
             LOG.info("Registered clipboard hotkey: %s", self.config.clipboard_hotkey)
+            LOG.info("Registered hard abort hotkey: %s", self.config.hard_abort_hotkey)
 
     def enable_recording_controls(self) -> None:
         with self._lock:
@@ -70,13 +82,13 @@ class KeyboardHotkeyManager:
             self._recording_handles = [
                 self._keyboard.add_hotkey(
                     _normalize_hotkey(self.config.stop_hotkey),
-                    lambda: self._safe_call(self._on_stop),
+                    self._handle_stop_key,
                     suppress=True,
                     trigger_on_release=False,
                 ),
                 self._keyboard.add_hotkey(
                     _normalize_hotkey(self.config.cancel_hotkey),
-                    lambda: self._safe_call(self._on_cancel),
+                    self._handle_cancel_key,
                     suppress=True,
                     trigger_on_release=False,
                 ),
@@ -109,6 +121,7 @@ class KeyboardHotkeyManager:
         if self._keyboard is None:
             return
         self._disable_pending = False
+        self._stop_pending = False
         self._disable_generation += 1
         for handle in self._recording_handles:
             try:
@@ -147,19 +160,19 @@ class KeyboardHotkeyManager:
     def stop(self) -> None:
         with self._lock:
             self.disable_recording_controls(force=True)
-            for handle in self._recording_handles:
-                try:
-                    self._keyboard.remove_hotkey(handle)
-                except Exception:
-                    LOG.debug("Failed to remove recording hotkey", exc_info=True)
-            self._recording_handles = []
             if self._keyboard is not None:
                 for handle in self._start_handles:
                     try:
                         self._keyboard.remove_hotkey(handle)
                     except Exception:
                         LOG.debug("Failed to remove start hotkey", exc_info=True)
+                if self._hard_abort_handle is not None:
+                    try:
+                        self._keyboard.remove_hotkey(self._hard_abort_handle)
+                    except Exception:
+                        LOG.debug("Failed to remove hard abort hotkey", exc_info=True)
             self._start_handles = []
+            self._hard_abort_handle = None
 
     def wait(self) -> None:
         if self._keyboard is None:
@@ -171,6 +184,44 @@ class KeyboardHotkeyManager:
             callback()
         except Exception:
             LOG.exception("Hotkey callback failed")
+
+    def _handle_stop_key(self) -> None:
+        with self._lock:
+            if self._stop_pending:
+                return
+            self._stop_pending = True
+
+        def run() -> None:
+            try:
+                time.sleep(max(0, int(self.config.hard_abort_window_ms)) / 1000)
+                if self._is_pressed(self.config.cancel_hotkey):
+                    callback = self._on_hard_abort
+                else:
+                    callback = self._on_stop
+                if callback is not None:
+                    self._safe_call(callback)
+            finally:
+                with self._lock:
+                    self._stop_pending = False
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_cancel_key(self) -> None:
+        if self._is_pressed(self.config.stop_hotkey):
+            callback = self._on_hard_abort
+        else:
+            callback = self._on_cancel
+        if callback is not None:
+            self._safe_call(callback)
+
+    def _is_pressed(self, hotkey: str) -> bool:
+        if self._keyboard is None:
+            return False
+        try:
+            return bool(self._keyboard.is_pressed(_normalize_hotkey(hotkey)))
+        except Exception:
+            LOG.debug("Could not read key state for %s", hotkey, exc_info=True)
+            return False
 
 
 def _normalize_hotkey(hotkey: str) -> str:

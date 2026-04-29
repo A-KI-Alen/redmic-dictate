@@ -9,11 +9,14 @@ zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
 ## Tastenkombinationen
 
 - `Alt+Y`: Live-Diktat starten. Der erkannte Text wird waehrend der Aufnahme in
-  kurzen Abschnitten direkt in das aktive Eingabefeld eingefuegt.
+  das aktive Eingabefeld eingefuegt. Der stabile Standard transkribiert nach dem
+  Stoppen, nicht mehr waehrend der laufenden Aufnahme.
 - `Alt+Shift+Y`: Aufnahme fuer die Zwischenablage starten. Nach dem Stoppen wird
   der ganze Text in die Zwischenablage kopiert.
 - `Space`: Aufnahme stoppen.
 - `Esc`: Aufnahme abbrechen.
+- `Space+Esc`: harter Abbruch. Beendet Aufnahme, Verarbeitung und Overlay
+  sofort, verwirft die laufende Sitzung und fuegt keinen Text ein.
 
 Wenn die Aufnahme laeuft, siehst du oben links ein rotes Statusfeld mit den
 aktuellen Tastenkombinationen und eine rote Markierung ueber der
@@ -99,9 +102,11 @@ live_hotkey = "alt+y"
 clipboard_hotkey = "alt+shift+y"
 stop_hotkey = "space"
 cancel_hotkey = "esc"
+hard_abort_hotkey = "space+esc"
 language = "de"
 model = "auto"
 selected_model = "small"
+live_streaming = false
 live_chunk_seconds = 4
 recording_overlay = true
 taskbar_recording_overlay = true
@@ -121,8 +126,10 @@ Standard fuer bessere Qualitaet ist jetzt `small`. Es ist langsamer als `base`,
 erkennt aber deutsche Diktate meist sauberer.
 
 Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
-also fuer die Zwischenablage. `Alt+Y` bleibt live und schnell; dort wuerde eine
-LLM-Korrektur pro Textstueck zu viel Verzoegerung erzeugen.
+also fuer die Zwischenablage. `Alt+Y` ist im stabilen Standard ein
+Direkt-Diktat: aufnehmen, stoppen, dann einmal transkribieren und einfuegen.
+Das vermeidet, dass lokale CPU-Transkription waehrend langer Aufnahmen in eine
+Warteschlange kippt.
 
 Fuer einen automatischen Modellvergleich:
 

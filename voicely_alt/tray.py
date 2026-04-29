@@ -61,6 +61,7 @@ class TrayApp:
                 pystray.MenuItem("Start Clipboard Capture", lambda: self.controller.start_clipboard_recording()),
                 pystray.MenuItem("Stop Recording", lambda: self.controller.stop_recording()),
                 pystray.MenuItem("Cancel Recording", lambda: self.controller.cancel_recording()),
+                pystray.MenuItem("Hard Abort", lambda: self.controller.hard_abort()),
                 pystray.MenuItem("Benchmark Models", lambda: self.controller.benchmark()),
                 pystray.MenuItem("Settings", lambda: _open_path(config_path())),
                 pystray.MenuItem("Quit", self._quit),

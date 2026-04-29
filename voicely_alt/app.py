@@ -45,6 +45,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
         controller.start_clipboard_recording,
         controller.stop_recording,
         controller.cancel_recording,
+        controller.hard_abort,
     )
     return controller, hotkeys, tray
 

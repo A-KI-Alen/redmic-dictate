@@ -41,7 +41,7 @@ class OutputTarget(Protocol):
 
 class RecordingControls(Protocol):
     def enable_recording_controls(self) -> None: ...
-    def disable_recording_controls(self) -> None: ...
+    def disable_recording_controls(self, force: bool = False) -> None: ...
 
 
 StatusCallback = Callable[[DictationState, str], None]
@@ -74,19 +74,23 @@ class DictationController:
         self._live_stop_event: threading.Event | None = None
         self._live_thread: threading.Thread | None = None
         self._focus_target: FocusTarget | None = None
+        self._session_id = 0
 
     def start_recording(self, mode: OutputMode = OutputMode.LIVE_PASTE) -> bool:
         with self._lock:
             if self.state not in {DictationState.IDLE, DictationState.ERROR}:
                 return False
             try:
+                self._session_id += 1
+                session_id = self._session_id
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self.recorder.start()
                 if self.controls is not None:
                     self.controls.enable_recording_controls()
                 if mode == OutputMode.LIVE_PASTE:
-                    self._start_live_worker()
+                    if self.config.live_streaming:
+                        self._start_live_worker(session_id)
                     self._set_state(DictationState.RECORDING, "Live-Diktat laeuft")
                 else:
                     self._set_state(DictationState.RECORDING, "Clipboard-Aufnahme laeuft")
@@ -107,20 +111,24 @@ class DictationController:
             if self.state != DictationState.RECORDING:
                 return False
             mode = self.output_mode
+            session_id = self._session_id
             try:
                 if self.controls is not None:
                     self.controls.disable_recording_controls()
 
-                if mode == OutputMode.LIVE_PASTE:
+                if mode == OutputMode.LIVE_PASTE and self.config.live_streaming:
                     final_audio = self.recorder.stop_if_audio()
                     self._set_state(DictationState.TRANSCRIBING, "Live-Diktat wird abgeschlossen")
                     target = self._finish_live_recording
-                    args = (final_audio,)
+                    args = (final_audio, session_id)
                 else:
                     final_audio = self.recorder.stop()
-                    self._set_state(DictationState.TRANSCRIBING, "Transkription fuer Zwischenablage laeuft")
+                    if mode == OutputMode.CLIPBOARD:
+                        self._set_state(DictationState.TRANSCRIBING, "Transkription fuer Zwischenablage laeuft")
+                    else:
+                        self._set_state(DictationState.TRANSCRIBING, "Transkription laeuft")
                     target = self._transcribe_final
-                    args = (final_audio, OutputMode.CLIPBOARD)
+                    args = (final_audio, mode, session_id)
             except Exception as exc:
                 self._set_error(exc)
                 return False
@@ -138,13 +146,31 @@ class DictationController:
             try:
                 self._stop_live_worker(wait=False)
                 if self.controls is not None:
-                    self.controls.disable_recording_controls()
+                    self.controls.disable_recording_controls(force=True)
                 self.recorder.cancel()
+                self._session_id += 1
                 self._set_state(DictationState.IDLE, "Aufnahme abgebrochen")
                 return True
             except Exception as exc:
                 self._set_error(exc)
                 return False
+
+    def hard_abort(self) -> bool:
+        with self._lock:
+            self._session_id += 1
+            self._stop_live_worker(wait=False)
+            if self.controls is not None:
+                self.controls.disable_recording_controls(force=True)
+            try:
+                self.recorder.cancel()
+            except Exception:
+                LOG.debug("Failed to cancel recorder during hard abort", exc_info=True)
+            self.state = DictationState.IDLE
+            self.last_error = ""
+
+        self._close_processing_backends()
+        self._set_state(DictationState.IDLE, "Hart abgebrochen")
+        return True
 
     def benchmark(self, record_seconds: int = 8) -> bool:
         with self._lock:
@@ -171,24 +197,20 @@ class DictationController:
         with self._lock:
             self._stop_live_worker(wait=False)
             if self.controls is not None:
-                self.controls.disable_recording_controls()
+                self.controls.disable_recording_controls(force=True)
             if self.state == DictationState.RECORDING:
                 try:
                     self.recorder.cancel()
                 except Exception:
                     LOG.debug("Failed to cancel active recording during shutdown", exc_info=True)
-            close = getattr(self.transcriber, "close", None)
-            if callable(close):
-                close()
-            processor_close = getattr(self.text_processor, "close", None)
-            if callable(processor_close):
-                processor_close()
+            self._session_id += 1
+            self._close_processing_backends()
             self._set_state(DictationState.IDLE, "Beendet")
 
-    def _start_live_worker(self) -> None:
+    def _start_live_worker(self, session_id: int) -> None:
         self._stop_live_worker(wait=True)
         self._live_stop_event = threading.Event()
-        self._live_thread = threading.Thread(target=self._live_loop, daemon=True)
+        self._live_thread = threading.Thread(target=self._live_loop, args=(session_id,), daemon=True)
         self._live_thread.start()
 
     def _stop_live_worker(self, wait: bool) -> None:
@@ -201,16 +223,18 @@ class DictationController:
         self._live_stop_event = None
         self._live_thread = None
 
-    def _live_loop(self) -> None:
+    def _live_loop(self, session_id: int) -> None:
         event = self._live_stop_event
         if event is None:
             return
 
         while not event.wait(max(1, self.config.live_chunk_seconds)):
+            if not self._session_active(session_id):
+                return
             try:
                 chunk = self.recorder.pop_chunk()
                 if chunk is not None:
-                    self._transcribe_and_output(chunk, OutputMode.LIVE_PASTE, live_chunk=True)
+                    self._transcribe_and_output(chunk, OutputMode.LIVE_PASTE, live_chunk=True, session_id=session_id)
             except Exception as exc:
                 self._set_error(exc)
                 event.set()
@@ -220,30 +244,49 @@ class DictationController:
                     LOG.debug("Failed to cancel recording after live error", exc_info=True)
                 return
 
-    def _finish_live_recording(self, final_audio: Path | None) -> None:
+    def _finish_live_recording(self, final_audio: Path | None, session_id: int) -> None:
         try:
             self._stop_live_worker(wait=True)
+            if not self._session_active(session_id):
+                return
             if final_audio is not None:
-                self._transcribe_and_output(final_audio, OutputMode.LIVE_PASTE, live_chunk=False)
-            self._set_state(DictationState.IDLE, "Live-Diktat beendet")
+                self._transcribe_and_output(final_audio, OutputMode.LIVE_PASTE, live_chunk=False, session_id=session_id)
+            if self._session_active(session_id):
+                self._set_state(DictationState.IDLE, "Live-Diktat beendet")
         except Exception as exc:
-            self._set_error(exc)
+            if self._session_active(session_id):
+                self._set_error(exc)
 
-    def _transcribe_final(self, audio_path: Path, mode: OutputMode) -> None:
+    def _transcribe_final(self, audio_path: Path, mode: OutputMode, session_id: int) -> None:
         try:
-            self._transcribe_and_output(audio_path, mode, live_chunk=False)
-            if mode == OutputMode.CLIPBOARD:
-                self._set_state(DictationState.IDLE, "Text in Zwischenablage")
-            else:
-                self._set_state(DictationState.IDLE, "Text eingefuegt")
+            if not self._session_active(session_id):
+                return
+            self._transcribe_and_output(audio_path, mode, live_chunk=False, session_id=session_id)
+            if self._session_active(session_id):
+                if mode == OutputMode.CLIPBOARD:
+                    self._set_state(DictationState.IDLE, "Text in Zwischenablage")
+                else:
+                    self._set_state(DictationState.IDLE, "Text eingefuegt")
         except Exception as exc:
-            self._set_error(exc)
+            if self._session_active(session_id):
+                self._set_error(exc)
 
-    def _transcribe_and_output(self, audio_path: Path, mode: OutputMode, live_chunk: bool) -> None:
+    def _transcribe_and_output(
+        self,
+        audio_path: Path,
+        mode: OutputMode,
+        live_chunk: bool,
+        session_id: int | None = None,
+    ) -> None:
+        session_id = self._session_id if session_id is None else session_id
         try:
+            if not self._session_active(session_id):
+                return
             if live_chunk:
                 self._publish_recording_status("Text wird verarbeitet")
             transcript = self.transcriber.transcribe(audio_path).strip()
+            if not self._session_active(session_id):
+                return
             if not transcript:
                 if not live_chunk:
                     self._set_state(DictationState.IDLE, "Kein Text erkannt")
@@ -254,6 +297,8 @@ class DictationController:
             ):
                 self._set_state(DictationState.TRANSCRIBING, "Text wird lokal nachkorrigiert")
                 transcript = self.text_processor.process(transcript, mode, live_chunk).strip()
+                if not self._session_active(session_id):
+                    return
                 if not transcript:
                     if not live_chunk:
                         self._set_state(DictationState.IDLE, "Kein Text erkannt")
@@ -265,9 +310,11 @@ class DictationController:
             else:
                 text = _format_live_text(transcript) if live_chunk else transcript
                 self._restore_focus_target()
+                if not self._session_active(session_id):
+                    return
                 self.paste_target.paste_text(text)
         finally:
-            if live_chunk:
+            if live_chunk and self._session_active(session_id):
                 self._publish_recording_status("Live-Diktat laeuft")
             try:
                 audio_path.unlink(missing_ok=True)
@@ -285,6 +332,24 @@ class DictationController:
         LOG.info("%s: %s", DictationState.RECORDING.value, message)
         if self.status_callback is not None:
             self.status_callback(DictationState.RECORDING, message)
+
+    def _session_active(self, session_id: int) -> bool:
+        with self._lock:
+            return session_id == self._session_id
+
+    def _close_processing_backends(self) -> None:
+        close = getattr(self.transcriber, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                LOG.debug("Failed to close transcriber backend", exc_info=True)
+        processor_close = getattr(self.text_processor, "close", None)
+        if callable(processor_close):
+            try:
+                processor_close()
+            except Exception:
+                LOG.debug("Failed to close text processor backend", exc_info=True)
 
     def _set_state(self, state: DictationState, message: str) -> None:
         with self._lock:

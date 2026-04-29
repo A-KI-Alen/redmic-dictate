@@ -17,6 +17,8 @@ class AppConfig:
     clipboard_hotkey: str = "alt+shift+y"
     stop_hotkey: str = "space"
     cancel_hotkey: str = "esc"
+    hard_abort_hotkey: str = "space+esc"
+    hard_abort_window_ms: int = 250
     backend: str = "local_whispercpp"
     language: str = "de"
     model: str = "auto"
@@ -29,6 +31,7 @@ class AppConfig:
     sample_rate: int = 16000
     max_recording_seconds: int = 300
     silence_rms_threshold: int = 60
+    live_streaming: bool = False
     live_chunk_seconds: int = 4
     paste_restore_delay_ms: int = 300
     beep_feedback: bool = True

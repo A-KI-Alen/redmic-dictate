@@ -33,9 +33,15 @@ class FakeRecorder:
 
 
 class FakeTranscriber:
+    def __init__(self):
+        self.closed = False
+
     def transcribe(self, audio_path: Path) -> str:
         assert audio_path.exists()
         return "Hallo Welt"
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakePaste:
@@ -52,6 +58,7 @@ class FakePaste:
 class FakeTextProcessor:
     def __init__(self):
         self.calls = []
+        self.closed = False
 
     def will_process(self, mode: OutputMode, live_chunk: bool) -> bool:
         return mode == OutputMode.CLIPBOARD and not live_chunk
@@ -61,7 +68,7 @@ class FakeTextProcessor:
         return "Hallo, Welt."
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 class FakeControls:
@@ -71,7 +78,8 @@ class FakeControls:
     def enable_recording_controls(self) -> None:
         self.enabled = True
 
-    def disable_recording_controls(self) -> None:
+    def disable_recording_controls(self, force: bool = False) -> None:
+        del force
         self.enabled = False
 
 
@@ -100,6 +108,26 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(controls.enabled)
             self.assertEqual(paste.text, "Hallo Welt")
             self.assertFalse(audio_path.exists())
+
+    def test_default_live_mode_waits_until_stop_before_pasting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "audio.wav"
+            paste = FakePaste()
+            controller = DictationController(
+                config=AppConfig(live_streaming=False),
+                recorder=FakeRecorder(audio_path),
+                transcriber=FakeTranscriber(),
+                paste_target=paste,
+                controls=FakeControls(),
+                background=False,
+            )
+
+            self.assertTrue(controller.start_live_recording())
+            self.assertEqual(paste.text, "")
+
+            self.assertTrue(controller.stop_recording())
+
+            self.assertEqual(paste.text, "Hallo Welt")
 
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -186,6 +214,40 @@ class ControllerTests(unittest.TestCase):
 
             self.assertEqual(paste.text, "Hallo Welt ")
             self.assertEqual(processor.calls, [])
+
+    def test_hard_abort_discards_stale_worker_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "audio.wav"
+            audio_path.write_bytes(b"fake wav")
+            paste = FakePaste()
+            controls = FakeControls()
+            transcriber = FakeTranscriber()
+            processor = FakeTextProcessor()
+            controller = DictationController(
+                config=AppConfig(),
+                recorder=FakeRecorder(audio_path),
+                transcriber=transcriber,
+                paste_target=paste,
+                text_processor=processor,
+                controls=controls,
+                background=False,
+            )
+
+            self.assertTrue(controller.start_live_recording())
+            stale_session = controller._session_id
+            self.assertTrue(controller.hard_abort())
+            controller._transcribe_and_output(
+                audio_path,
+                OutputMode.LIVE_PASTE,
+                live_chunk=False,
+                session_id=stale_session,
+            )
+
+            self.assertEqual(controller.state, DictationState.IDLE)
+            self.assertEqual(paste.text, "")
+            self.assertFalse(controls.enabled)
+            self.assertTrue(transcriber.closed)
+            self.assertTrue(processor.closed)
 
 
 if __name__ == "__main__":

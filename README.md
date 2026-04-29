@@ -11,6 +11,7 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Starts clipboard capture with `Alt+Shift+Y`.
 - Stops recording with plain `Space` while recording.
 - Cancels recording with `Esc` while recording.
+- Hard-aborts with `Space+Esc` in any active state.
 - Sends the temporary WAV file to a local `whisper.cpp` server.
 - Pastes the German transcript into the currently focused input field.
 - Can locally clean up clipboard dictations with Ollama and `llama3.2:3b`.
@@ -69,6 +70,8 @@ live_hotkey = "alt+y"
 clipboard_hotkey = "alt+shift+y"
 stop_hotkey = "space"
 cancel_hotkey = "esc"
+hard_abort_hotkey = "space+esc"
+hard_abort_window_ms = 250
 backend = "local_whispercpp"
 language = "de"
 model = "auto"
@@ -76,6 +79,7 @@ threads = "auto"
 paste_method = "clipboard"
 cloud_fallback = "manual"
 silence_rms_threshold = 60
+live_streaming = false
 live_chunk_seconds = 4
 beep_feedback = true
 tray_notifications = true
@@ -99,14 +103,16 @@ benchmark has been run yet, it falls back to `base`.
   and paste behavior must be verified per operating system.
 - The clipboard integration restores the previous text clipboard after pasting.
   Non-text clipboard formats are not preserved in this MVP.
-- `Alt+Y` inserts text chunk by chunk into the active field while you
-  dictate. It still uses short local transcription chunks, not true word-by-word
-  streaming.
+- `Alt+Y` records into the active field target and inserts text after `Space`.
+  Live chunk streaming is disabled by default because CPU-local `small`
+  transcription can otherwise fall behind and destabilize the app.
 - `Alt+Shift+Y` records until `Space`, then copies the final transcript into the
   clipboard and plays a discreet bell sound. By default this mode also runs a
   local LLM cleanup step before copying the text.
-- LLM cleanup is not applied to live chunks by default. On CPU it is useful for
-  quality, but too slow for immediate live typing.
+- `Space+Esc` is the emergency brake. It cancels the current session, closes
+  local processing backends, discards stale worker output, and pastes nothing.
+- LLM cleanup is not applied to direct field dictation by default. On CPU it is
+  useful for quality, but too slow for immediate typing.
 - Live insertion briefly uses the text clipboard for each paste chunk and then
   restores the previous text clipboard.
 - Very quiet or empty recordings are ignored before transcription to avoid local
