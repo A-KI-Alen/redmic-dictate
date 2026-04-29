@@ -23,11 +23,22 @@ class RecordingOverlay:
         self._mode = "hidden"
         self._message = ""
         self._audio_level = 0.0
+        self._recording_started_at = 0.0
+        self._recording_seconds = 0
 
     def show(self, mode: str = "recording", message: str = "") -> None:
         if not self.config.recording_overlay:
             return
         with self._lock:
+            if mode == "hidden":
+                self._recording_started_at = 0.0
+                self._recording_seconds = 0
+            elif mode == "recording" and self._mode != "recording":
+                self._recording_started_at = time.time()
+                self._recording_seconds = 0
+            elif self._mode == "recording" and mode != "recording":
+                self._recording_seconds = max(0, int(time.time() - self._recording_started_at))
+                self._recording_started_at = 0.0
             self._mode = mode
             self._message = message
             self._write_status_locked()
@@ -66,6 +77,8 @@ class RecordingOverlay:
             self._mode = "hidden"
             self._message = ""
             self._audio_level = 0.0
+            self._recording_started_at = 0.0
+            self._recording_seconds = 0
             self._write_status_locked()
             self._stop_process()
 
@@ -106,6 +119,10 @@ class RecordingOverlay:
                 "cancel_hotkey": self.config.cancel_hotkey,
                 "hard_abort_hotkey": self.config.hard_abort_hotkey,
                 "audio_level": round(self._audio_level, 4),
+                "recording_started_at": self._recording_started_at,
+                "recording_seconds": max(0, int(time.time() - self._recording_started_at))
+                if self._recording_started_at
+                else self._recording_seconds,
                 "updated_at": time.time(),
             }
             tmp_path = status_path.with_suffix(".tmp")

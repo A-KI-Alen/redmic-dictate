@@ -162,6 +162,8 @@ class DictationController:
                         self._set_state(DictationState.TRANSCRIBING, "Transkription laeuft")
                     target = self._transcribe_final
                     args = (final_audio, mode, session_id)
+                if self.controls is not None:
+                    self.controls.disable_recording_controls(force=True)
             except Exception as exc:
                 self._set_error(exc)
                 return False
@@ -450,6 +452,8 @@ class DictationController:
         session_id: int,
     ) -> None:
         try:
+            if self._chunk_worker_active():
+                self._set_state(DictationState.TRANSCRIBING, "Warte auf laufenden 5s-Chunk")
             self._stop_chunk_worker(wait=True)
             if not self._session_active(session_id):
                 if final_audio is not None:
@@ -457,14 +461,30 @@ class DictationController:
                 return
 
             parts: list[str] = []
-            for result in self._chunk_results_snapshot():
+            results = self._chunk_results_snapshot()
+            total_parts = len(results) + (1 if final_audio is not None else 0)
+            done_parts = 0
+            if total_parts:
+                self._set_state(DictationState.TRANSCRIBING, f"Verarbeite 0/{total_parts} Teile")
+
+            for result in results:
                 if result.text:
                     parts.append(result.text)
                 elif result.audio_path is not None:
+                    self._set_state(
+                        DictationState.TRANSCRIBING,
+                        f"Verarbeite {done_parts + 1}/{total_parts} Teile",
+                    )
                     parts.append(self._transcribe_audio_path(result.audio_path, session_id))
+                done_parts += 1
 
             if final_audio is not None:
+                self._set_state(
+                    DictationState.TRANSCRIBING,
+                    f"Verarbeite {done_parts + 1}/{total_parts} Teile",
+                )
                 parts.append(self._transcribe_audio_path(final_audio, session_id))
+                done_parts += 1
 
             transcript = _join_transcript_parts(parts)
             if not self._session_active(session_id):

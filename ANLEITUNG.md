@@ -115,7 +115,7 @@ selected_model = "small"
 live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
-background_chunk_seconds = 15
+background_chunk_seconds = 5
 recording_overlay = true
 taskbar_recording_overlay = true
 keep_transcript_clipboard = true
@@ -134,7 +134,7 @@ Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
 Standard fuer bessere Qualitaet ist jetzt `small`. Es ist langsamer als `base`,
 erkennt aber deutsche Diktate meist sauberer.
 
-RedMic transkribiert waehrend der Aufnahme alle 15 Sekunden einen Audio-Chunk im
+RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk im
 Hintergrund. Nach `Space` muss dadurch nur noch der letzte Rest verarbeitet und
 alles zusammengesetzt werden.
 

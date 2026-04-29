@@ -21,7 +21,7 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 - Shows a red cursor ring while recording and a rotating ring while processing.
 - Shows a translucent red taskbar wave driven by the live microphone level while recording.
 - Switches the taskbar wave to a heartbeat curve while processing.
-- Pre-transcribes 15-second chunks in the background to reduce the wait after stopping.
+- Pre-transcribes 5-second chunks in the background to reduce the wait after stopping.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
@@ -86,7 +86,7 @@ silence_rms_threshold = 60
 live_streaming = false
 live_chunk_seconds = 4
 background_chunking = true
-background_chunk_seconds = 15
+background_chunk_seconds = 5
 beep_feedback = true
 tray_notifications = true
 recording_overlay = true
@@ -111,7 +111,7 @@ benchmark has been run yet, it falls back to `base`.
   the cursor has moved while local processing runs, use `Ctrl+V` or `Windows+V`
   to recover the text.
 - `Alt+Y` records into the active field target and inserts text after `Space`.
-  Live field insertion is disabled by default; instead, 15-second chunks are
+  Live field insertion is disabled by default; instead, 5-second chunks are
   transcribed in the background and joined after `Space`.
 - `Alt+Shift+Y` records until `Space`, then copies the final transcript into the
   clipboard and plays a discreet bell sound. By default this mode also runs a

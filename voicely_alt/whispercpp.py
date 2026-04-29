@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import subprocess
 import time
 import urllib.error
@@ -37,6 +38,15 @@ class WhisperCppServerManager:
         if self.is_running():
             return
 
+        if _port_is_open(self.config.host, self.config.port):
+            new_port = _find_free_port(self.config.host, start=max(18080, int(self.config.port) + 1))
+            LOG.warning(
+                "Port %s is occupied by a non-whisper service; switching whisper.cpp to %s",
+                self.config.port,
+                new_port,
+            )
+            self.config.port = new_port
+
         executable = find_whisper_executable("server")
         if executable is None:
             raise TranscriptionError(
@@ -56,7 +66,10 @@ class WhisperCppServerManager:
     def is_running(self) -> bool:
         try:
             with urllib.request.urlopen(self.base_url + "/", timeout=0.5) as response:
-                return 200 <= response.status < 500
+                if not 200 <= response.status < 500:
+                    return False
+                body = response.read(8192).decode("utf-8", errors="ignore").lower()
+                return "whisper" in body
         except Exception:
             return False
 
@@ -206,3 +219,18 @@ def _extract_text(response: bytes) -> str:
             return value.strip()
 
     raise TranscriptionError(f"Unexpected whisper.cpp response shape: {parsed!r}")
+
+
+def _port_is_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _find_free_port(host: str, start: int) -> int:
+    for port in range(start, start + 100):
+        if not _port_is_open(host, port):
+            return port
+    raise TranscriptionError("Could not find a free local port for whisper.cpp.")

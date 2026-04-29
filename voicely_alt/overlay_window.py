@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -167,6 +168,14 @@ def draw_hud(
     subline = status.get("message") or ("Bitte warten" if processing else "Mikrofon aktiv")
     canvas.create_text(94, 20, text=headline, fill=WHITE, anchor="nw", font=("Segoe UI", 15, "bold"))
     canvas.create_text(94, 45, text=subline, fill="#f5c7cd", anchor="nw", font=("Segoe UI", 10))
+    canvas.create_text(
+        width - 22,
+        22,
+        text=_elapsed_label(status),
+        fill=WHITE,
+        anchor="ne",
+        font=("Segoe UI", 16, "bold"),
+    )
     draw_level_ticker(canvas, 94, 68, width - 112, 30, level_history, processing, angle)
 
     stop = _hotkey_label(status.get("stop_hotkey", "space"))
@@ -207,20 +216,7 @@ def draw_level_ticker(
         draw_heartbeat_line(canvas, x + 6, y + 2, width - 12, height - 4, angle, "#ffd0d7")
         return
 
-    center = y + height / 2
-    bar_width = 5
-    gap = 3
-    visible = max(1, min(len(levels), width // (bar_width + gap)))
-    recent = levels[-visible:]
-    start_x = x + width - visible * (bar_width + gap) + gap
-    for index, level in enumerate(recent):
-        level = _clamp_level(level)
-        bar_height = max(4, level * (height - 6))
-        left = start_x + index * (bar_width + gap)
-        top = center - bar_height / 2
-        bottom = center + bar_height / 2
-        fill = WHITE if index > visible - 5 else "#ff8794"
-        canvas.create_rectangle(left, top, left + bar_width, bottom, fill=fill, outline=fill)
+    draw_microphone_wave_line(canvas, x + 6, y + 2, width - 12, height - 4, levels, WHITE)
 
 
 def draw_heartbeat_line(canvas, x: int, y: int, width: int, height: int, angle: int, fill: str) -> None:
@@ -291,20 +287,32 @@ def draw_taskbar_wave(
         draw_heartbeat_line(canvas, 0, 1, width, max(4, height - 2), angle, "#ffe2e6")
         return
 
-    center = height / 2
-    bar_width = 4
-    gap = 4
-    visible = max(1, min(len(levels), width // (bar_width + gap)))
+    draw_microphone_wave_line(canvas, 0, 1, width, max(4, height - 2), levels, "#fff5f7")
+
+
+def draw_microphone_wave_line(
+    canvas,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    levels: list[float],
+    fill: str,
+) -> None:
+    center = y + height / 2
+    visible = max(8, min(len(levels), width // 5))
     recent = levels[-visible:]
-    start_x = width - visible * (bar_width + gap)
+    step = width / max(1, visible - 1)
+    points: list[float] = []
     for index, level in enumerate(recent):
         level = _clamp_level(level)
-        bar_height = max(3, level * max(5, height - 4))
-        left = start_x + index * (bar_width + gap)
-        top = center - bar_height / 2
-        bottom = center + bar_height / 2
-        fill = "#fff5f7"
-        canvas.create_rectangle(left, top, left + bar_width, bottom, fill=fill, outline=fill)
+        phase = index * 0.82
+        direction = 1 if int(phase / 3.14159) % 2 == 0 else -1
+        curve = 0.35 + 0.65 * abs((index % 9) - 4) / 4
+        y_value = center - direction * max(1.0, level * curve * height * 0.48)
+        points.extend([x + index * step, y_value])
+    if len(points) >= 4:
+        canvas.create_line(*points, fill=fill, width=2, smooth=True)
 
 
 def read_status(config: AppConfig) -> dict[str, Any]:
@@ -317,6 +325,8 @@ def read_status(config: AppConfig) -> dict[str, Any]:
         "cancel_hotkey": config.cancel_hotkey,
         "hard_abort_hotkey": config.hard_abort_hotkey,
         "audio_level": 0.0,
+        "recording_started_at": 0.0,
+        "recording_seconds": 0,
     }
     try:
         status = json.loads(overlay_status_path().read_text(encoding="utf-8"))
@@ -338,6 +348,22 @@ def _segment(value: float, start: float, end: float) -> float:
     if end <= start:
         return 0.0
     return max(0.0, min(1.0, (value - start) / (end - start)))
+
+
+def _elapsed_label(status: dict[str, Any]) -> str:
+    started_at = _number(status.get("recording_started_at", 0.0))
+    if started_at > 0:
+        seconds = int(max(0, time.time() - started_at))
+    else:
+        seconds = int(_number(status.get("recording_seconds", 0)))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def _number(value: object) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
 
 
 def monitor_rects(root) -> list[tuple[int, int, int, int]]:
