@@ -70,6 +70,10 @@ class AppConfig:
         "RedMic Dictate, Windows, Alt, Shift, Y, Taskleiste, rote Leiste, "
         "Zwischenablage, Transkription, Mikrofon, Mauszeiger, Hotkey, Codex, OpenAI"
     )
+    tracking_enabled: bool = True
+    tracking_retention_days: int = 14
+    tracking_include_transcript_text: bool = False
+    tracking_transcript_preview_chars: int = 0
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AppConfig":
@@ -87,8 +91,9 @@ class AppConfig:
     @classmethod
     def load_or_create(cls, path: Path | None = None) -> "AppConfig":
         target = path or config_path()
+        existed = target.exists()
         config = cls.load(target)
-        if not target.exists():
+        if not existed or _missing_config_keys(target, cls.__dataclass_fields__.keys()):
             config.save(target)
         return config
 
@@ -129,3 +134,14 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, float):
         return repr(value)
     return json.dumps(str(value))
+
+
+def _missing_config_keys(path: Path, expected: Any) -> bool:
+    if not path.exists():
+        return True
+    try:
+        with path.open("rb") as handle:
+            raw = tomllib.load(handle)
+        return any(key not in raw for key in expected)
+    except Exception:
+        return False

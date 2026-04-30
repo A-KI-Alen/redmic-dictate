@@ -14,6 +14,7 @@ long-running background work.
 4. `DictationController` assembles the final transcript and sends it to
    `ClipboardPaste`.
 5. `TrayApp` and `RecordingOverlay` display status, waveform, and progress.
+6. `EventTracker` writes local diagnostic events for later 24-hour reviews.
 
 ## Module Responsibilities
 
@@ -40,6 +41,11 @@ long-running background work.
 - `llm.py`
   Optionally cleans clipboard-mode transcripts with the local Ollama model.
 
+- `tracking.py`
+  Writes local JSONL telemetry for sessions, state changes, chunk progress,
+  transcription timings, errors, and output metadata. Full transcript text is
+  disabled by default.
+
 ## Pipeline Invariants
 
 - The `base` path is always the source of fast output.
@@ -49,6 +55,7 @@ long-running background work.
 - Every final transcript is copied to the clipboard as a recovery path.
 - `Space+Esc` invalidates the active session and stale worker output is ignored.
 - Temporary audio files are removed by the owner that last holds them.
+- Tracking failures must never block recording, transcription, or paste behavior.
 
 ## Stability Notes
 

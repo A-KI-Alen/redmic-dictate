@@ -42,6 +42,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.transcript_cleanup, "clipboard")
         self.assertEqual(config.cleanup_backend, "ollama")
         self.assertEqual(config.cleanup_model, "llama3.2:3b")
+        self.assertTrue(config.tracking_enabled)
+        self.assertEqual(config.tracking_retention_days, 14)
+        self.assertFalse(config.tracking_include_transcript_text)
+        self.assertEqual(config.tracking_transcript_preview_chars, 0)
 
     def test_config_roundtrip(self) -> None:
         import tempfile
@@ -57,6 +61,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(loaded.port, 9000)
         self.assertEqual(loaded.transcript_cleanup, "off")
         self.assertEqual(loaded.resolved_model(), "base")
+
+    def test_load_or_create_persists_new_default_keys(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('selected_model = "base"\n', encoding="utf-8")
+
+            loaded = AppConfig.load_or_create(path)
+            written = path.read_text(encoding="utf-8")
+
+        self.assertEqual(loaded.selected_model, "base")
+        self.assertIn("tracking_enabled = true", written)
+        self.assertIn('selected_model = "base"', written)
 
 
 if __name__ == "__main__":

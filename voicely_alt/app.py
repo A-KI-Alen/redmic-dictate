@@ -13,6 +13,7 @@ from .paths import logs_dir
 from .paste import ClipboardPaste
 from .recorder import AudioRecorder
 from .single_instance import AlreadyRunningError, SingleInstance
+from .tracking import EventTracker, NullTracker
 from .tray import TrayApp
 from .whispercpp import WhisperCppServerManager, WhisperCppTranscriber, stop_stale_whisper_servers
 
@@ -31,6 +32,20 @@ def configure_logging() -> None:
 
 def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyManager, TrayApp]:
     hotkeys = KeyboardHotkeyManager(config)
+    tracker = EventTracker(config) if config.tracking_enabled else NullTracker()
+    tracker.record(
+        "app_started",
+        model=config.resolved_model(),
+        quality_model=config.quality_model if config.quality_chunking else "",
+        language=config.language,
+        live_hotkey=config.live_hotkey,
+        clipboard_hotkey=config.clipboard_hotkey,
+        stop_hotkey=config.stop_hotkey,
+        cancel_hotkey=config.cancel_hotkey,
+        hard_abort_hotkey=config.hard_abort_hotkey,
+        background_chunk_seconds=config.background_chunk_seconds,
+        quality_chunk_seconds=config.quality_chunk_seconds,
+    )
     server = WhisperCppServerManager(config)
     fast_transcriber = WhisperCppTranscriber(config, server)
     quality_transcriber = None
@@ -54,6 +69,7 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
         paste_target=ClipboardPaste(config),
         text_processor=OllamaTranscriptCleaner(config),
         controls=hotkeys,
+        tracker=tracker,
     )
     tray = TrayApp(config, controller)
     controller.status_callback = tray.set_status

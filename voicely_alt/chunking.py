@@ -28,6 +28,11 @@ class Transcriber(Protocol):
     def transcribe(self, audio_path: Path) -> str: ...
 
 
+class Tracker(Protocol):
+    def record(self, event: str, session_id: int | None = None, **data: object) -> None: ...
+    def transcript_fields(self, text: str, prefix: str = "transcript") -> dict[str, object]: ...
+
+
 SessionActive = Callable[[int], bool]
 ProgressCallback = Callable[[int, int], None]
 TranscribeAudio = Callable[[Path], str]
@@ -69,12 +74,14 @@ class ChunkPipeline:
         fast_transcriber: Transcriber,
         session_active: SessionActive,
         quality_transcriber: Transcriber | None = None,
+        tracker: Tracker | None = None,
     ):
         self.config = config
         self.recorder = recorder
         self.fast_transcriber = fast_transcriber
         self.quality_transcriber = quality_transcriber
         self.session_active = session_active
+        self.tracker = tracker
 
         self._stop_event: threading.Event | None = None
         self._producer_thread: threading.Thread | None = None
@@ -88,6 +95,7 @@ class ChunkPipeline:
         self._quality_results: list[QualityResult] = []
         self._quality_pending_chunks: list[tuple[int, Path]] = []
         self._quality_accept_session_id: int | None = None
+        self._active_session_id: int | None = None
         self._next_index = 0
         self._fast_in_progress = 0
         self._quality_in_progress = 0
@@ -95,6 +103,7 @@ class ChunkPipeline:
     def start(self, session_id: int) -> None:
         self.stop_fast(wait=True)
         self.stop_quality(wait=False, close_backend=False)
+        self._active_session_id = session_id
         self._stop_event = threading.Event()
         self._fast_queue = queue.Queue()
         self._producer_thread = threading.Thread(target=self._producer_loop, args=(session_id,), daemon=True)
@@ -109,6 +118,13 @@ class ChunkPipeline:
         self._fast_thread.start()
         if self._quality_thread is not None:
             self._quality_thread.start()
+        self._track(
+            "chunk_pipeline_started",
+            session_id,
+            background_chunk_seconds=self.config.background_chunk_seconds,
+            quality_chunking=bool(self.quality_transcriber is not None and self.config.quality_chunking),
+            quality_chunk_seconds=self.config.quality_chunk_seconds,
+        )
 
     def request_stop(self) -> None:
         if self._stop_event is not None:
@@ -204,6 +220,7 @@ class ChunkPipeline:
             self._fast_results = []
             self._quality_results = []
             self._quality_pending_chunks = []
+            self._active_session_id = None
             self._next_index = 0
             self._fast_in_progress = 0
             self._quality_in_progress = 0
@@ -264,6 +281,14 @@ class ChunkPipeline:
                     group[-1][0],
                     fast_backlog,
                 )
+                self._track(
+                    "quality_chunk_skipped",
+                    self._active_session_id,
+                    start_index=group[0][0],
+                    end_index=group[-1][0],
+                    reason="fast_backlog",
+                    fast_backlog=fast_backlog,
+                )
                 for _, path in group:
                     unlink_audio(path)
                 return
@@ -279,8 +304,23 @@ class ChunkPipeline:
                     group[-1][0],
                     fast_backlog,
                 )
+                self._track(
+                    "quality_chunk_skipped",
+                    self._active_session_id,
+                    start_index=group[0][0],
+                    end_index=group[-1][0],
+                    reason="fast_backlog_after_combine",
+                    fast_backlog=fast_backlog,
+                )
                 unlink_audio(group_audio)
                 return
+            self._track(
+                "quality_chunk_queued",
+                self._active_session_id,
+                start_index=group[0][0],
+                end_index=group[-1][0],
+                audio_file=group_audio.name,
+            )
             self._queue_quality_work(
                 QualityWork(
                     start_index=group[0][0],
@@ -290,6 +330,11 @@ class ChunkPipeline:
             )
         except Exception:
             LOG.exception("Could not queue quality chunk")
+            self._track(
+                "quality_chunk_error",
+                self._active_session_id,
+                error="Could not queue quality chunk",
+            )
             if quality_copy is not None:
                 unlink_audio(quality_copy)
             if group is not None:
@@ -363,9 +408,16 @@ class ChunkPipeline:
                     continue
                 index = self._next_chunk_index()
                 LOG.info("Queued audio chunk %s for pre-transcription", index)
+                self._track(
+                    "chunk_queued",
+                    session_id,
+                    chunk_index=index,
+                    audio_file=audio_path.name,
+                )
                 self._queue_fast_result(ChunkResult(index=index, audio_path=audio_path))
             except Exception:
                 LOG.exception("Background chunk capture failed")
+                self._track("chunk_capture_error", session_id, error="Background chunk capture failed")
                 if audio_path is not None:
                     unlink_audio(audio_path)
 
@@ -389,15 +441,29 @@ class ChunkPipeline:
                     self.store_fast_result(result)
                     continue
                 LOG.info("Pre-transcribing audio chunk %s", result.index)
+                started_at = time.perf_counter()
                 text = self.fast_transcriber.transcribe(result.audio_path).strip()
                 if not self.session_active(session_id):
                     unlink_audio(result.audio_path)
                     return
                 self.store_fast_result(ChunkResult(index=result.index, text=text))
+                self._track(
+                    "chunk_fast_completed",
+                    session_id,
+                    chunk_index=result.index,
+                    duration_ms=int((time.perf_counter() - started_at) * 1000),
+                    **self._transcript_fields(text),
+                )
                 self.maybe_queue_quality_chunk(result.index, result.audio_path)
                 unlink_audio(result.audio_path)
             except Exception:
                 LOG.exception("Background chunk transcription failed")
+                self._track(
+                    "chunk_fast_error",
+                    session_id,
+                    chunk_index=result.index,
+                    error="Background chunk transcription failed",
+                )
                 if self.session_active(session_id):
                     self.store_fast_result(result)
                 elif result.audio_path is not None:
@@ -429,6 +495,7 @@ class ChunkPipeline:
                     work.end_index,
                     self.config.quality_model,
                 )
+                started_at = time.perf_counter()
                 text = transcriber.transcribe(work.audio_path).strip()
                 if not self._quality_session_active(session_id):
                     return
@@ -439,8 +506,23 @@ class ChunkPipeline:
                         text=text,
                     )
                 )
+                self._track(
+                    "quality_chunk_completed",
+                    session_id,
+                    start_index=work.start_index,
+                    end_index=work.end_index,
+                    duration_ms=int((time.perf_counter() - started_at) * 1000),
+                    **self._transcript_fields(text),
+                )
             except Exception:
                 LOG.exception("Quality chunk transcription failed")
+                self._track(
+                    "quality_chunk_error",
+                    session_id,
+                    start_index=work.start_index,
+                    end_index=work.end_index,
+                    error="Quality chunk transcription failed",
+                )
             finally:
                 self._mark_quality_in_progress(-1)
                 unlink_audio(work.audio_path)
@@ -489,6 +571,23 @@ class ChunkPipeline:
     def _quality_session_active(self, session_id: int) -> bool:
         with self._lock:
             return self.session_active(session_id) and self._quality_accept_session_id == session_id
+
+    def _transcript_fields(self, text: str, prefix: str = "transcript") -> dict[str, object]:
+        if self.tracker is None:
+            stripped = text.strip()
+            return {
+                f"{prefix}_chars": len(stripped),
+                f"{prefix}_words": len(stripped.split()) if stripped else 0,
+            }
+        return self.tracker.transcript_fields(text, prefix=prefix)
+
+    def _track(self, event: str, session_id: int | None, **data: object) -> None:
+        if self.tracker is None:
+            return
+        try:
+            self.tracker.record(event, session_id, **data)
+        except Exception:
+            LOG.debug("Tracking failed for event %s", event, exc_info=True)
 
 
 def join_transcript_parts(parts: list[str]) -> str:

@@ -36,6 +36,8 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
   model-load time after `Space`.
 - Forces German transcription with a German prompt, disables temperature fallback,
   suppresses non-speech tokens, and refreshes long-running whisper servers.
+- Writes local JSONL diagnostic events for sessions, chunks, processing times,
+  errors, and outputs so problematic runs can be reviewed later.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
@@ -122,6 +124,10 @@ transcript_cleanup = "clipboard"
 cleanup_backend = "ollama"
 cleanup_model = "llama3.2:3b"
 cleanup_keep_alive = "30m"
+tracking_enabled = true
+tracking_retention_days = 14
+tracking_include_transcript_text = false
+tracking_transcript_preview_chars = 0
 ```
 
 When `model = "auto"`, the app uses the benchmark-selected model. If no
@@ -148,5 +154,15 @@ benchmark has been run yet, it falls back to `base`.
   transcript there as a safety net.
 - Very quiet or empty recordings are ignored before transcription to avoid local
   Whisper silence hallucinations.
+- Tracking files are written locally under
+  `%USERPROFILE%\.redmic_dictate\logs\events-YYYY-MM-DD.jsonl`. By default they
+  contain metadata, timings, counts, hashes, and errors, but no full dictated
+  text and no audio.
+- To inspect the last 24 hours:
+
+```powershell
+.\.venv\Scripts\python.exe -m voicely_alt diagnostics --hours 24 --write
+```
+
 - If the local whisper server is missing or no model has been downloaded, run
   `.\scripts\setup.ps1 -Model base`.

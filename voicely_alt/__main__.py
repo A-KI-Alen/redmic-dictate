@@ -10,6 +10,7 @@ from .config import AppConfig
 from .installer import ensure_model, install_whispercpp
 from .llm import pull_ollama_model
 from .paths import benchmark_sample_path, config_path
+from .tracking import build_diagnostics_report, load_events, write_diagnostics_report
 from .whispercpp import WhisperCppTranscriber
 
 
@@ -38,6 +39,10 @@ def main() -> None:
 
     transcribe_parser = subparsers.add_parser("transcribe", help="Transcribe one WAV file locally")
     transcribe_parser.add_argument("audio", type=Path)
+
+    diagnostics_parser = subparsers.add_parser("diagnostics", help="Summarize local tracking events")
+    diagnostics_parser.add_argument("--hours", type=int, default=24, help="Time window to inspect")
+    diagnostics_parser.add_argument("--write", action="store_true", help="Write a Markdown report into the log folder")
 
     subparsers.add_parser("config", help="Print config path and current config")
 
@@ -80,6 +85,12 @@ def main() -> None:
             print(transcript)
         finally:
             transcriber.close()
+    elif command == "diagnostics":
+        hours = max(1, int(args.hours))
+        events = load_events(hours)
+        print(build_diagnostics_report(events, hours=hours))
+        if args.write:
+            print(f"written: {write_diagnostics_report(config, hours=hours)}")
     elif command == "config":
         print(config_path())
         print(json.dumps(config.__dict__ if hasattr(config, "__dict__") else {

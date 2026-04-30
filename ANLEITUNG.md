@@ -132,6 +132,10 @@ tray_notifications = true
 transcript_cleanup = "clipboard"
 cleanup_model = "llama3.2:3b"
 cleanup_keep_alive = "30m"
+tracking_enabled = true
+tracking_retention_days = 14
+tracking_include_transcript_text = false
+tracking_transcript_preview_chars = 0
 ```
 
 Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
@@ -179,6 +183,28 @@ Fuer einen automatischen Modellvergleich:
 
 Das Tool testet `tiny`, `base` und `small`. Fuer deutsche Diktate ist `base`
 meist der bessere Kompromiss als `tiny`.
+
+## Diagnose und 24h-Tracking
+
+RedMic schreibt lokale Diagnose-Events nach:
+
+```text
+C:\Users\AE\.redmic_dictate\logs\events-YYYY-MM-DD.jsonl
+```
+
+Erfasst werden Session-Start und -Ende, Statuswechsel, Chunk-Fortschritt,
+Transkriptionszeiten, Quality-Bloecke, Abbrueche, Fehler und Ausgabe-Metadaten.
+Vollstaendige diktierte Texte und Audiodateien werden standardmaessig nicht
+gespeichert. Stattdessen werden Laengen, Wortzahlen und kurze Hashes erfasst,
+damit man Laeufe vergleichen kann, ohne den Inhalt offenzulegen.
+
+Auswertung der letzten 24 Stunden:
+
+```powershell
+.\.venv\Scripts\python.exe -m voicely_alt diagnostics --hours 24 --write
+```
+
+Der Bericht wird zusaetzlich als Markdown-Datei im Log-Ordner abgelegt.
 
 ## Fehlerbehebung
 
