@@ -55,6 +55,10 @@ To start RedMic Dictate automatically when you log in to Windows:
 .\scripts\install_autostart.ps1
 ```
 
+The installer writes a small launcher into `%USERPROFILE%\.redmic_dictate` and
+points the Windows Startup shortcut to that launcher. This lets startup wait for
+cloud or mapped drives before launching the app.
+
 To remove autostart again:
 
 ```powershell

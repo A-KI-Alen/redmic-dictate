@@ -67,6 +67,11 @@ Autostart aktivieren:
 .\scripts\install_autostart.ps1
 ```
 
+Der Autostart nutzt einen kleinen Launcher unter
+`C:\Users\AE\.redmic_dictate\start_redmic_autostart.ps1`. Dieser wartet beim
+Windows-Login auf den Projektordner, falls das Laufwerk `I:` noch nicht sofort
+bereit ist.
+
 Autostart wieder entfernen:
 
 ```powershell
