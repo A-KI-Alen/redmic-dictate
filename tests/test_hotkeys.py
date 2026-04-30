@@ -56,7 +56,7 @@ class HotkeyTests(unittest.TestCase):
 
     def test_alt_y_start_hook_suppresses_y(self) -> None:
         keyboard = FakeKeyboard()
-        manager = KeyboardHotkeyManager(AppConfig())
+        manager = KeyboardHotkeyManager(AppConfig(start_debounce_ms=0))
         manager._keyboard = keyboard
         live_calls = []
         clipboard_calls = []
@@ -81,6 +81,22 @@ class HotkeyTests(unittest.TestCase):
         self.assertFalse(callback(FakeKeyEvent("down")))
         self.assertFalse(callback(FakeKeyEvent("up")))
         self.assertEqual(clipboard_calls, ["clipboard"])
+
+    def test_start_hotkey_is_debounced(self) -> None:
+        keyboard = FakeKeyboard()
+        manager = KeyboardHotkeyManager(AppConfig(start_debounce_ms=1200))
+        manager._keyboard = keyboard
+        calls = []
+
+        manager._register_start_hotkeys(lambda: calls.append("live"), lambda: None)
+        callback = keyboard.hooks[0][2]
+
+        keyboard.pressed.add("alt")
+        self.assertFalse(callback(FakeKeyEvent("down")))
+        self.assertFalse(callback(FakeKeyEvent("up")))
+        self.assertFalse(callback(FakeKeyEvent("down")))
+
+        self.assertEqual(calls, ["live"])
 
     def test_recording_controls_block_keys_and_poll_for_stop(self) -> None:
         keyboard = FakeKeyboard()

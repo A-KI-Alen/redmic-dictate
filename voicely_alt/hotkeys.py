@@ -32,6 +32,7 @@ class KeyboardHotkeyManager:
         self._recording_monitor_stop: threading.Event | None = None
         self._recording_monitor_thread: threading.Thread | None = None
         self._start_key_pending = False
+        self._last_start_at = 0.0
         self._hard_abort_latched = False
 
     def start(
@@ -200,13 +201,13 @@ class KeyboardHotkeyManager:
         return [
             self._keyboard.add_hotkey(
                 live_hotkey,
-                lambda: self._safe_call(on_live_start),
+                lambda: self._handle_start_callback(on_live_start),
                 suppress=True,
                 trigger_on_release=False,
             ),
             self._keyboard.add_hotkey(
                 clipboard_hotkey,
-                lambda: self._safe_call(on_clipboard_start),
+                lambda: self._handle_start_callback(on_clipboard_start),
                 suppress=True,
                 trigger_on_release=False,
             ),
@@ -234,9 +235,19 @@ class KeyboardHotkeyManager:
                 if self._start_key_pending:
                     return False
                 self._start_key_pending = True
-            self._safe_call(on_clipboard_start if shift_down else on_live_start)
+            self._handle_start_callback(on_clipboard_start if shift_down else on_live_start)
 
         return False
+
+    def _handle_start_callback(self, callback: Callable[[], None]) -> None:
+        debounce_seconds = max(0, int(self.config.start_debounce_ms)) / 1000
+        now = time.monotonic()
+        with self._lock:
+            if debounce_seconds and now - self._last_start_at < debounce_seconds:
+                LOG.info("Ignored duplicate start hotkey within debounce window")
+                return
+            self._last_start_at = now
+        self._safe_call(callback)
 
     def _add_blocked_recording_key(
         self,

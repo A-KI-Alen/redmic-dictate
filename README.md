@@ -127,6 +127,7 @@ stop_hotkey = "space"
 cancel_hotkey = "esc"
 hard_abort_hotkey = "space+esc"
 hard_abort_window_ms = 250
+start_debounce_ms = 1200
 backend = "openai_realtime"
 language = "de"
 transcription_prompt = "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. Schreibe keine englischen Woerter, ausser sie wurden klar gesprochen. Fachbegriffe: RedMic Dictate, Windows, Alt, Shift, Zwischenablage, Transkription, Mikrofon, Codex, OpenAI."

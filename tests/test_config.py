@@ -17,6 +17,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.cancel_hotkey, "esc")
         self.assertEqual(config.hard_abort_hotkey, "space+esc")
         self.assertEqual(config.hard_abort_window_ms, 250)
+        self.assertEqual(config.start_debounce_ms, 1200)
         self.assertEqual(config.backend, "openai_realtime")
         self.assertEqual(config.language, "de")
         self.assertIn("deutsches Diktat", config.transcription_prompt)

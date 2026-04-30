@@ -19,6 +19,7 @@ class AppConfig:
     cancel_hotkey: str = "esc"
     hard_abort_hotkey: str = "space+esc"
     hard_abort_window_ms: int = 250
+    start_debounce_ms: int = 1200
     backend: str = "openai_realtime"
     language: str = "de"
     transcription_prompt: str = (

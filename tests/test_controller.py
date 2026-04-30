@@ -530,6 +530,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(costs[0][2], "30.0s")
         self.assertAlmostEqual(costs[0][0], 30.0 * 0.0028 / 60.0, places=4)
 
+    def test_prompt_leak_is_removed_before_clipboard_output(self) -> None:
+        paste = FakePaste()
+        config = AppConfig()
+        controller = DictationController(
+            config=config,
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=paste,
+            controls=FakeControls(),
+            background=False,
+        )
+        controller._session_id = 1
+        leaked = f"{config.transcription_prompt} {config.transcription_prompt} Eigentliche Notiz."
+
+        self.assertTrue(
+            controller._process_and_output_transcript(
+                leaked,
+                OutputMode.CLIPBOARD,
+                live_chunk=False,
+                session_id=1,
+            )
+        )
+
+        self.assertEqual(paste.text, "Eigentliche Notiz.")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ from .openai_usage import (
 )
 from .paths import benchmark_sample_path
 from .state import DictationState, OutputMode
+from .text_safety import strip_prompt_leak
 
 
 LOG = logging.getLogger(__name__)
@@ -453,6 +454,8 @@ class DictationController:
         started_at = time.perf_counter()
         try:
             result = realtime.stop()
+            result.transcript = self._clean_transcript_text(result.transcript, session_id)
+            result.delivered_text = self._clean_transcript_text(result.delivered_text, session_id)
             self._track(
                 "openai_realtime_finished",
                 session_id,
@@ -865,7 +868,10 @@ class DictationController:
         try:
             if not self._session_active(session_id):
                 return ""
-            transcript = self.transcriber.transcribe(audio_path).strip()
+            transcript = self._clean_transcript_text(
+                self.transcriber.transcribe(audio_path),
+                session_id,
+            ).strip()
             self._track(
                 "audio_transcribed",
                 session_id,
@@ -931,7 +937,7 @@ class DictationController:
     ) -> bool:
         if not self._session_active(session_id):
             return False
-        transcript = transcript.strip()
+        transcript = self._clean_transcript_text(transcript, session_id).strip()
         if not transcript:
             if not live_chunk:
                 self._set_state(DictationState.IDLE, "Kein Text erkannt")
@@ -949,7 +955,10 @@ class DictationController:
         ):
             self._set_state(DictationState.TRANSCRIBING, "Text wird lokal nachkorrigiert")
             cleanup_started_at = time.perf_counter()
-            transcript = self.text_processor.process(transcript, mode, live_chunk).strip()
+            transcript = self._clean_transcript_text(
+                self.text_processor.process(transcript, mode, live_chunk),
+                session_id,
+            ).strip()
             self._track(
                 "cleanup_completed",
                 session_id,
@@ -1075,7 +1084,10 @@ class DictationController:
                 return
             self._publish_idle_status("Qualitaetslauf im Hintergrund")
             self._track("quality_guard_started", session_id, mode=mode.value, audio_file=audio_path.name)
-            improved = self.quality_transcriber.transcribe(audio_path).strip()
+            improved = self._clean_transcript_text(
+                self.quality_transcriber.transcribe(audio_path),
+                session_id,
+            ).strip()
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             if not self._session_active(session_id):
                 return
@@ -1241,6 +1253,17 @@ class DictationController:
                 f"{prefix}_words": len(stripped.split()) if stripped else 0,
             }
         return self.tracker.transcript_fields(text, prefix=prefix)
+
+    def _clean_transcript_text(self, text: str, session_id: int) -> str:
+        original = str(text or "")
+        cleaned = strip_prompt_leak(original, self.config.transcription_prompt)
+        if cleaned != original.strip():
+            self._track(
+                "transcript_prompt_leak_removed",
+                session_id,
+                removed_chars=max(0, len(original.strip()) - len(cleaned)),
+            )
+        return cleaned
 
     def _track(self, event: str, session_id: int | None = None, **data: object) -> None:
         if self.tracker is None:
