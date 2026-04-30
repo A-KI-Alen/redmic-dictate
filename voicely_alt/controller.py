@@ -163,7 +163,6 @@ class DictationController:
                     chunked = True
                     self.chunks.request_stop()
                     final_audio = self.recorder.stop_if_audio()
-                    self.chunks.stop_quality(wait=False, close_backend=True)
                     if mode == OutputMode.CLIPBOARD:
                         self._set_state(DictationState.TRANSCRIBING, "Transkription fuer Zwischenablage laeuft")
                     else:
@@ -421,6 +420,7 @@ class DictationController:
         mode: OutputMode,
         session_id: int,
     ) -> None:
+        quality_guard_audio: Path | None = None
         try:
             self._track(
                 "chunked_final_started",
@@ -475,6 +475,7 @@ class DictationController:
                     unlink_audio(final_audio)
                 return
 
+            quality_guard_audio = self._build_quality_guard_audio(final_audio, session_id)
             transcript = self.chunks.assemble_transcript(
                 final_audio=final_audio,
                 transcribe_audio=lambda audio_path: self._transcribe_audio_path(audio_path, session_id),
@@ -490,8 +491,14 @@ class DictationController:
                 **self._transcript_fields(transcript),
             )
             if not self._session_active(session_id):
+                if quality_guard_audio is not None:
+                    unlink_audio(quality_guard_audio)
+                    quality_guard_audio = None
                 return
             if not transcript:
+                if quality_guard_audio is not None:
+                    unlink_audio(quality_guard_audio)
+                    quality_guard_audio = None
                 self._finish_session(session_id, "no_text", mode)
                 self._set_state(DictationState.IDLE, "Kein Text erkannt")
                 return
@@ -503,7 +510,18 @@ class DictationController:
                 session_id=session_id,
             )
             if self._session_active(session_id):
+                should_run_quality_guard = self._should_run_quality_guard(
+                    quality_guard_audio,
+                    transcript,
+                    session_id,
+                )
                 self._finish_session(session_id, "finished", mode, transcript=transcript)
+                if should_run_quality_guard and quality_guard_audio is not None:
+                    self._start_quality_guard(quality_guard_audio, transcript, mode, session_id)
+                    quality_guard_audio = None
+                elif quality_guard_audio is not None:
+                    unlink_audio(quality_guard_audio)
+                    quality_guard_audio = None
                 if mode == OutputMode.CLIPBOARD:
                     self._set_state(DictationState.IDLE, "Text in Zwischenablage")
                 else:
@@ -512,6 +530,8 @@ class DictationController:
             if self._session_active(session_id):
                 self._set_error(exc)
         finally:
+            if quality_guard_audio is not None:
+                unlink_audio(quality_guard_audio)
             self.chunks.clear(delete_audio=True)
             if self._session_active(session_id):
                 self._disable_recording_controls()
@@ -641,6 +661,136 @@ class DictationController:
     def _session_active(self, session_id: int) -> bool:
         with self._lock:
             return session_id == self._session_id
+
+    def _build_quality_guard_audio(self, final_audio: Path | None, session_id: int) -> Path | None:
+        if not self.config.quality_guard_enabled or self.quality_transcriber is None:
+            return None
+        try:
+            audio_path = self.chunks.build_quality_guard_audio(final_audio)
+            if audio_path is not None:
+                self._track("quality_guard_audio_built", session_id, audio_file=audio_path.name)
+            return audio_path
+        except Exception as exc:
+            self._track("quality_guard_audio_error", session_id, error=str(exc))
+            LOG.debug("Could not build quality guard audio", exc_info=True)
+            return None
+
+    def _should_run_quality_guard(
+        self,
+        audio_path: Path | None,
+        transcript: str,
+        session_id: int,
+    ) -> bool:
+        if audio_path is None or self.quality_transcriber is None:
+            return False
+        if not self.config.quality_guard_enabled:
+            return False
+        elapsed_seconds = self._session_elapsed_ms(session_id) / 1000
+        if elapsed_seconds < max(0, int(self.config.quality_guard_min_recording_seconds)):
+            self._track(
+                "quality_guard_skipped",
+                session_id,
+                reason="recording_too_short",
+                elapsed_ms=self._session_elapsed_ms(session_id),
+            )
+            return False
+
+        covered, total, ratio = self.chunks.quality_coverage()
+        threshold = max(0.0, min(1.0, float(self.config.quality_guard_min_coverage)))
+        should_run = bool(total and ratio < threshold)
+        self._track(
+            "quality_guard_decision",
+            session_id,
+            covered_chunks=covered,
+            total_chunks=total,
+            coverage_ratio=round(ratio, 3),
+            threshold=threshold,
+            will_run=should_run,
+            **self._transcript_fields(transcript),
+        )
+        return should_run
+
+    def _start_quality_guard(
+        self,
+        audio_path: Path,
+        source_transcript: str,
+        mode: OutputMode,
+        session_id: int,
+    ) -> None:
+        args = (audio_path, source_transcript, mode, session_id)
+        if self.background:
+            threading.Thread(target=self._run_quality_guard, args=args, daemon=True).start()
+        else:
+            self._run_quality_guard(*args)
+
+    def _run_quality_guard(
+        self,
+        audio_path: Path,
+        source_transcript: str,
+        mode: OutputMode,
+        session_id: int,
+    ) -> None:
+        started_at = time.perf_counter()
+        try:
+            if not self._session_active(session_id) or self.quality_transcriber is None:
+                return
+            self._publish_idle_status("Qualitaetslauf im Hintergrund")
+            self._track("quality_guard_started", session_id, mode=mode.value, audio_file=audio_path.name)
+            improved = self.quality_transcriber.transcribe(audio_path).strip()
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            if not self._session_active(session_id):
+                return
+            if not self._usable_quality_guard_text(source_transcript, improved):
+                self._track(
+                    "quality_guard_rejected",
+                    session_id,
+                    mode=mode.value,
+                    duration_ms=duration_ms,
+                    source_chars=len(source_transcript.strip()),
+                    **self._transcript_fields(improved, prefix="quality_transcript"),
+                )
+                return
+
+            self.paste_target.copy_text(improved)
+            self._track(
+                "quality_guard_completed",
+                session_id,
+                mode=mode.value,
+                duration_ms=duration_ms,
+                **self._transcript_fields(improved, prefix="quality_transcript"),
+            )
+            self._publish_idle_status("Qualitaetsversion in Zwischenablage")
+        except Exception as exc:
+            self._track(
+                "quality_guard_error",
+                session_id,
+                mode=mode.value,
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+                error=str(exc),
+            )
+            LOG.warning("Quality guard failed; keeping fast transcript", exc_info=True)
+        finally:
+            unlink_audio(audio_path)
+
+    def _usable_quality_guard_text(self, source: str, improved: str) -> bool:
+        source = source.strip()
+        improved = improved.strip()
+        if not improved:
+            return False
+        if improved == source:
+            return False
+        min_ratio = max(0.0, float(self.config.quality_guard_min_text_ratio))
+        if source and len(improved) < max(12, int(len(source) * min_ratio)):
+            return False
+        return True
+
+    def _publish_idle_status(self, message: str) -> None:
+        with self._lock:
+            if self.state != DictationState.IDLE:
+                return
+        LOG.info("%s: %s", DictationState.IDLE.value, message)
+        if self.status_callback is not None:
+            self.status_callback(DictationState.IDLE, message)
 
     def _session_elapsed_ms(self, session_id: int) -> int:
         started_at = self._session_started_at.get(session_id)

@@ -50,7 +50,11 @@ class AppConfig:
     quality_threads: str = "2"
     quality_chunk_seconds: int = 10
     quality_max_fast_backlog: int = 0
-    quality_wait_after_stop_seconds: float = 1.5
+    quality_wait_after_stop_seconds: float = 6.0
+    quality_guard_enabled: bool = True
+    quality_guard_min_recording_seconds: int = 20
+    quality_guard_min_coverage: float = 0.50
+    quality_guard_min_text_ratio: float = 0.40
     paste_restore_delay_ms: int = 300
     beep_feedback: bool = False
     tray_notifications: bool = True

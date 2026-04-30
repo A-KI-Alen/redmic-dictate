@@ -51,7 +51,9 @@ long-running background work.
 - The `base` path is always the source of fast output.
 - `small` only receives chunks after the matching `base` chunks have completed.
 - `small` is skipped whenever the fast queue has backlog.
-- `small` is stopped immediately after `Space`.
+- `small` gets a bounded wait window after `Space`.
+- If finished `small` coverage is too low for a longer dictation, the quality
+  guard can reprocess retained audio in the background and update the clipboard.
 - Every final transcript is copied to the clipboard as a recovery path.
 - `Space+Esc` invalidates the active session and stale worker output is ignored.
 - Temporary audio files are removed by the owner that last holds them.

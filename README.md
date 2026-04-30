@@ -30,8 +30,11 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Gives the fast `base` path priority: `small` only receives audio after the
   matching `base` chunks are already done and is skipped whenever the fast queue
   has backlog.
-- Stops the `small` quality worker immediately after `Space` so final insertion
-  is driven by the fast `base` path.
+- Gives the `small` quality worker a short wait window after `Space`; the
+  default is 6 seconds.
+- If `small` did not cover enough of a longer dictation, starts a background
+  quality guard that transcribes the retained audio with `small` and copies the
+  improved version into the clipboard when ready.
 - Warms the `base` whisper server at app startup so short dictations do not pay
   model-load time after `Space`.
 - Forces German transcription with a German prompt, disables temperature fallback,
@@ -116,7 +119,11 @@ quality_model = "small"
 quality_threads = "2"
 quality_chunk_seconds = 10
 quality_max_fast_backlog = 0
-quality_wait_after_stop_seconds = 1.5
+quality_wait_after_stop_seconds = 6.0
+quality_guard_enabled = true
+quality_guard_min_recording_seconds = 20
+quality_guard_min_coverage = 0.50
+quality_guard_min_text_ratio = 0.40
 beep_feedback = false
 tray_notifications = true
 recording_overlay = true
@@ -150,6 +157,10 @@ benchmark has been run yet, it falls back to `base`.
 - `Alt+Shift+Y` records until `Space`, then copies the final transcript into the
   clipboard and plays a discreet bell sound. By default this mode also runs a
   local LLM cleanup step before copying the text.
+- For longer dictations with weak `small` coverage, RedMic keeps temporary audio
+  just long enough to run a background quality guard. The fast transcript stays
+  available immediately; the better `small` version replaces the clipboard
+  later if it passes basic safety checks.
 - `Space+Esc` is the emergency brake. It cancels the current session, closes
   local processing backends, discards stale worker output, and pastes nothing.
 - LLM cleanup is not applied to direct field dictation by default. On CPU it is

@@ -243,6 +243,37 @@ class ChunkPipeline:
         with self._lock:
             return sorted(self._quality_results, key=lambda result: result.start_index)
 
+    def quality_coverage(self) -> tuple[int, int, float]:
+        results = self.fast_results()
+        if not results:
+            return 0, 0, 1.0
+
+        indexes = {result.index for result in results}
+        covered: set[int] = set()
+        for quality in self.quality_results():
+            if not quality.text:
+                continue
+            for index in indexes:
+                if quality.start_index <= index <= quality.end_index:
+                    covered.add(index)
+        total = len(indexes)
+        done = len(covered)
+        return done, total, done / total if total else 1.0
+
+    def build_quality_guard_audio(self, final_audio: Path | None) -> Path | None:
+        paths: list[Path] = []
+        for result in self.fast_results():
+            if result.audio_path is not None and result.audio_path.exists():
+                paths.append(result.audio_path)
+        if final_audio is not None and final_audio.exists():
+            paths.append(final_audio)
+
+        if not paths:
+            return None
+        if len(paths) == 1:
+            return _copy_audio_file(paths[0])
+        return _combine_wav_files(paths)
+
     def store_fast_result(self, result: ChunkResult) -> None:
         with self._lock:
             self._fast_results.append(result)
@@ -446,7 +477,9 @@ class ChunkPipeline:
                 if not self.session_active(session_id):
                     unlink_audio(result.audio_path)
                     return
-                self.store_fast_result(ChunkResult(index=result.index, text=text))
+                self.store_fast_result(
+                    ChunkResult(index=result.index, text=text, audio_path=result.audio_path)
+                )
                 self._track(
                     "chunk_fast_completed",
                     session_id,
@@ -455,7 +488,6 @@ class ChunkPipeline:
                     **self._transcript_fields(text),
                 )
                 self.maybe_queue_quality_chunk(result.index, result.audio_path)
-                unlink_audio(result.audio_path)
             except Exception:
                 LOG.exception("Background chunk transcription failed")
                 self._track(

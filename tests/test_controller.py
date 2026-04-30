@@ -50,15 +50,31 @@ class FakeTranscriber:
         self.closed = True
 
 
+class QualityFakeTranscriber(FakeTranscriber):
+    def __init__(self, text: str):
+        super().__init__()
+        self.text = text
+        self.calls = 0
+
+    def transcribe(self, audio_path: Path) -> str:
+        assert audio_path.exists()
+        self.calls += 1
+        return self.text
+
+
 class FakePaste:
     def __init__(self):
         self.text = ""
+        self.pasted = []
+        self.copied = []
 
     def paste_text(self, text: str) -> None:
         self.text = text
+        self.pasted.append(text)
 
     def copy_text(self, text: str) -> None:
         self.text = text
+        self.copied.append(text)
 
 
 class NamedFakeTranscriber(FakeTranscriber):
@@ -253,7 +269,7 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller.chunks._quality_queue.empty())
             self.assertEqual(controller.chunks._quality_pending_chunks, [])
 
-    def test_stop_recording_closes_quality_worker_immediately(self) -> None:
+    def test_stop_recording_gives_quality_worker_final_wait_window(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "audio.wav"
             quality = FakeTranscriber()
@@ -270,7 +286,41 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller.start_live_recording())
             self.assertTrue(controller.stop_recording())
 
-            self.assertTrue(quality.closed)
+            self.assertFalse(quality.closed)
+
+    def test_quality_guard_copies_better_background_transcript(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            chunk = Path(directory) / "chunk.wav"
+            _write_test_wav(chunk)
+            paste = FakePaste()
+            quality = QualityFakeTranscriber("deutlich bessere Fassung")
+            controller = DictationController(
+                config=AppConfig(
+                    background_chunking=True,
+                    quality_chunking=True,
+                    quality_guard_enabled=True,
+                    quality_guard_min_recording_seconds=0,
+                    quality_guard_min_coverage=1.0,
+                ),
+                recorder=FakeRecorder(Path(directory) / "unused.wav"),
+                transcriber=NamedFakeTranscriber(),
+                quality_transcriber=quality,
+                paste_target=paste,
+                controls=FakeControls(),
+                background=False,
+            )
+            controller._session_id = 1
+            controller._session_started_at[1] = 0.0
+            controller.chunks.store_fast_result(
+                ChunkResult(index=0, text="schlechte base Fassung", audio_path=chunk)
+            )
+
+            controller._transcribe_final_with_chunks(None, OutputMode.LIVE_PASTE, 1)
+
+            self.assertEqual(paste.pasted, ["schlechte base Fassung"])
+            self.assertEqual(paste.copied, ["deutlich bessere Fassung"])
+            self.assertEqual(quality.calls, 1)
+            self.assertFalse(chunk.exists())
 
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

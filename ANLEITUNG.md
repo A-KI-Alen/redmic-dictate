@@ -128,7 +128,11 @@ quality_model = "small"
 quality_threads = "2"
 quality_chunk_seconds = 10
 quality_max_fast_backlog = 0
-quality_wait_after_stop_seconds = 1.5
+quality_wait_after_stop_seconds = 6.0
+quality_guard_enabled = true
+quality_guard_min_recording_seconds = 20
+quality_guard_min_coverage = 0.50
+quality_guard_min_text_ratio = 0.40
 recording_overlay = true
 taskbar_recording_overlay = true
 keep_transcript_clipboard = true
@@ -158,11 +162,16 @@ RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk mit
 mit `small` verarbeitet, aber erst nachdem die passenden `base`-Chunks schon
 fertig sind. Wenn die schnelle Warteschlange Rueckstand hat, wird der
 `small`-Block uebersprungen. Wenn ein `small`-Block rechtzeitig fertig ist,
-ersetzt er die zwei schnellen `base`-Teile. Wenn nicht, wird sofort der
-vorhandene `base`-Text genutzt. Sobald du `Space` drueckst, wird die laufende
-`small`-Qualitaetsverarbeitung abgebrochen, damit die schnelle Ausgabe nicht
-mehr von `small` blockiert werden kann. Nach `Space` muss dadurch meistens nur
-noch der letzte Rest verarbeitet und alles zusammengesetzt werden.
+ersetzt er die zwei schnellen `base`-Teile. Wenn du `Space` drueckst, bekommt
+die laufende `small`-Qualitaetsverarbeitung standardmaessig noch 6 Sekunden
+Zeit. Wenn sie in diesem Fenster fertig wird, wird der bessere Text verwendet.
+Wenn nicht, wird der vorhandene `base`-Text sofort genutzt.
+
+Bei laengeren Diktaten mit schwacher `small`-Abdeckung startet RedMic danach
+einen Quality-Guard im Hintergrund. Dabei wird die behaltene Audiofassung noch
+einmal mit `small` verarbeitet. Der schnelle Text bleibt sofort verfuegbar; die
+bessere Fassung wird spaeter automatisch in die Zwischenablage gelegt, wenn sie
+brauchbar ist.
 
 Der schnelle `base`-Whisper-Server wird beim Start der App im Hintergrund
 vorgeladen. Dadurch muss ein kurzes Diktat nach `Space` nicht erst das Modell
