@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
+from difflib import SequenceMatcher
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -424,7 +426,9 @@ class DictationController:
         if mode != OutputMode.LIVE_PASTE:
             return False
         with self._lock:
-            if not self._session_active(session_id) or self.state != DictationState.RECORDING:
+            if not self._session_active(session_id):
+                return False
+            if self.state not in {DictationState.RECORDING, DictationState.TRANSCRIBING}:
                 return False
         return self._process_and_output_transcript(
             text,
@@ -481,7 +485,10 @@ class DictationController:
             if mode == OutputMode.CLIPBOARD:
                 self._process_and_output_transcript(result.transcript, mode, live_chunk=False, session_id=session_id)
             elif result.delivered_any:
-                missing_text = _missing_realtime_suffix(result.transcript, result.delivered_text)
+                missing_text = self._clean_transcript_text(
+                    _missing_realtime_suffix(result.transcript, result.delivered_text),
+                    session_id,
+                )
                 if missing_text:
                     self._process_and_output_transcript(
                         missing_text,
@@ -1345,8 +1352,65 @@ def _missing_realtime_suffix(transcript: str, delivered_text: str) -> str:
         return full
     if full.startswith(delivered):
         return full[len(delivered) :].strip()
-    return ""
+    words = _word_spans(full)
+    delivered_words = _normalized_words(delivered)
+    if not words or not delivered_words:
+        return ""
+    prefix_word_count = _best_matching_prefix_word_count(
+        [word for _, _, word in words],
+        delivered_words,
+    )
+    if prefix_word_count is None:
+        return ""
+    if prefix_word_count >= len(words):
+        return ""
+    return full[words[prefix_word_count][0] :].strip()
 
 
 def _openai_realtime_cost_rate_eur_per_minute(config: AppConfig) -> float:
     return transcription_rate_eur_per_minute(config, config.openai_realtime_transcription_model)
+
+
+_WORD_PATTERN = re.compile(r"\S+")
+
+
+def _word_spans(text: str) -> list[tuple[int, int, str]]:
+    words: list[tuple[int, int, str]] = []
+    for match in _WORD_PATTERN.finditer(text):
+        normalized = _normalize_alignment_word(match.group(0))
+        if normalized:
+            words.append((match.start(), match.end(), normalized))
+    return words
+
+
+def _normalized_words(text: str) -> list[str]:
+    words: list[str] = []
+    for match in _WORD_PATTERN.finditer(text):
+        normalized = _normalize_alignment_word(match.group(0))
+        if normalized:
+            words.append(normalized)
+    return words
+
+
+def _normalize_alignment_word(word: str) -> str:
+    return "".join(char for char in word.casefold() if char.isalnum())
+
+
+def _best_matching_prefix_word_count(full_words: list[str], delivered_words: list[str]) -> int | None:
+    expected = len(delivered_words)
+    if expected == 0:
+        return None
+    low = max(0, int(expected * 0.60) - 6)
+    high = min(len(full_words), int(expected * 1.40) + 8)
+    best_count = None
+    best_ratio = 0.0
+    for count in range(low, high + 1):
+        ratio = SequenceMatcher(None, delivered_words, full_words[:count], autojunk=False).ratio()
+        length_penalty = abs(count - expected) / max(expected, 1) * 0.05
+        score = ratio - length_penalty
+        if score > best_ratio:
+            best_ratio = score
+            best_count = count
+    if best_count is None or best_ratio < 0.72:
+        return None
+    return best_count

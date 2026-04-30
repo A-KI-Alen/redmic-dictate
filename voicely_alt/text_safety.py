@@ -21,12 +21,19 @@ def strip_prompt_leak(text: str, prompt: str) -> str:
 
     while True:
         normalized_text, end_positions = _normalize_with_end_positions(cleaned)
-        if not normalized_text.startswith(normalized_prompt):
+        match_at = normalized_text.find(normalized_prompt)
+        if match_at < 0:
             return cleaned.strip()
-        if len(end_positions) < len(normalized_prompt):
+        if len(end_positions) < match_at + len(normalized_prompt):
             return ""
-        cut_at = end_positions[len(normalized_prompt) - 1]
-        next_cleaned = cleaned[cut_at:].lstrip(" \t\r\n:.-")
+        start_at = 0 if match_at == 0 else end_positions[match_at - 1]
+        end_at = end_positions[match_at + len(normalized_prompt) - 1]
+        left = cleaned[:start_at].rstrip(" \t\r\n:.-")
+        right = cleaned[end_at:].lstrip(" \t\r\n:.-")
+        if left and right:
+            next_cleaned = f"{left} {right}"
+        else:
+            next_cleaned = left or right
         if next_cleaned == cleaned:
             return cleaned.strip()
         cleaned = next_cleaned

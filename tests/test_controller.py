@@ -509,6 +509,32 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(missing, "zweiter Teil")
 
+    def test_realtime_suffix_tolerates_small_wording_differences(self) -> None:
+        missing = _missing_realtime_suffix(
+            "Das ist ein Test mit einem fehlenden letzten Satz.",
+            "Das ist der Test mit einem",
+        )
+
+        self.assertEqual(missing, "fehlenden letzten Satz.")
+
+    def test_late_realtime_text_is_accepted_while_transcribing(self) -> None:
+        paste = FakePaste()
+        controller = DictationController(
+            config=AppConfig(),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=paste,
+            controls=FakeControls(),
+            background=False,
+        )
+        controller._session_id = 1
+        controller.state = DictationState.TRANSCRIBING
+        controller.output_mode = OutputMode.LIVE_PASTE
+
+        self.assertTrue(controller._on_realtime_text("spaetes Segment", OutputMode.LIVE_PASTE, 1))
+
+        self.assertEqual(paste.text, "spaetes Segment ")
+
     def test_realtime_cost_callback_receives_last_operation_estimate(self) -> None:
         costs = []
         controller = DictationController(

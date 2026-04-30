@@ -28,6 +28,12 @@ class TextSafetyTests(unittest.TestCase):
 
         self.assertEqual(strip_prompt_leak(text, AppConfig().transcription_prompt), text)
 
+    def test_strip_prompt_leak_removes_prompt_suffix(self) -> None:
+        prompt = AppConfig().transcription_prompt
+        text = f"Das ist der echte Text. {prompt}"
+
+        self.assertEqual(strip_prompt_leak(text, prompt), "Das ist der echte Text")
+
 
 if __name__ == "__main__":
     unittest.main()
