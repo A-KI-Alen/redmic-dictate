@@ -17,6 +17,11 @@ from .openai_realtime import (
     RealtimeUnavailableError,
     is_openai_realtime_enabled,
 )
+from .openai_usage import (
+    estimate_transcription_cost_eur,
+    query_openai_transcription_usage,
+    transcription_rate_eur_per_minute,
+)
 from .paths import benchmark_sample_path
 from .state import DictationState, OutputMode
 
@@ -60,6 +65,8 @@ class Tracker(Protocol):
 
 StatusCallback = Callable[[DictationState, str], None]
 LevelCallback = Callable[[float], None]
+RuntimeInfoCallback = Callable[[str, str, bool, float], None]
+CostInfoCallback = Callable[[float, str, str], None]
 
 
 class DictationController:
@@ -74,6 +81,8 @@ class DictationController:
         controls: RecordingControls | None = None,
         status_callback: StatusCallback | None = None,
         level_callback: LevelCallback | None = None,
+        runtime_info_callback: RuntimeInfoCallback | None = None,
+        cost_info_callback: CostInfoCallback | None = None,
         tracker: Tracker | None = None,
         background: bool = True,
     ):
@@ -86,6 +95,8 @@ class DictationController:
         self.controls = controls
         self.status_callback = status_callback
         self.level_callback = level_callback
+        self.runtime_info_callback = runtime_info_callback
+        self.cost_info_callback = cost_info_callback
         self.tracker = tracker
         self.background = background
         self.state = DictationState.IDLE
@@ -97,6 +108,7 @@ class DictationController:
         self._focus_target: FocusTarget | None = None
         self._session_id = 0
         self._session_started_at: dict[int, float] = {}
+        self._session_started_epoch: dict[int, float] = {}
         self._progressive_pasted_chunks: set[int] = set()
         self._realtime_session: OpenAIRealtimeTranscriptionSession | None = None
         self._level_stop_event: threading.Event | None = None
@@ -119,6 +131,7 @@ class DictationController:
                 self._session_id += 1
                 session_id = self._session_id
                 self._session_started_at[session_id] = time.monotonic()
+                self._session_started_epoch[session_id] = time.time()
                 self._progressive_pasted_chunks = set()
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
@@ -256,6 +269,7 @@ class DictationController:
                     elapsed_ms=self._session_elapsed_ms(session_id),
                 )
                 self._session_started_at.pop(session_id, None)
+                self._session_started_epoch.pop(session_id, None)
                 self._set_state(DictationState.IDLE, "Aufnahme abgebrochen")
                 return True
             except Exception as exc:
@@ -286,6 +300,7 @@ class DictationController:
                 elapsed_ms=self._session_elapsed_ms(session_id),
             )
             self._session_started_at.pop(session_id, None)
+            self._session_started_epoch.pop(session_id, None)
 
         self._close_processing_backends()
         self._set_state(DictationState.IDLE, "Hart abgebrochen")
@@ -336,6 +351,7 @@ class DictationController:
 
     def _try_start_realtime(self, session_id: int, mode: OutputMode) -> bool:
         if not is_openai_realtime_enabled(self.config):
+            self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
             return False
         if not hasattr(self.recorder, "read_stream_chunk") or not hasattr(self.recorder, "actual_sample_rate"):
             self._track(
@@ -343,6 +359,7 @@ class DictationController:
                 session_id,
                 reason="recorder_has_no_stream_tap",
             )
+            self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
             return False
 
         realtime = OpenAIRealtimeTranscriptionSession(
@@ -362,6 +379,7 @@ class DictationController:
                 fallback_backend=self.config.cloud_fallback,
             )
             LOG.info("OpenAI Realtime unavailable; using local fallback: %s", exc)
+            self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
             return False
         except Exception as exc:
             self._track(
@@ -371,9 +389,16 @@ class DictationController:
                 fallback_backend=self.config.cloud_fallback,
             )
             LOG.warning("OpenAI Realtime start failed; using local fallback", exc_info=True)
+            self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
             return False
 
         self._realtime_session = realtime
+        self._publish_runtime_info(
+            "Online",
+            self.config.openai_realtime_transcription_model,
+            True,
+            _openai_realtime_cost_rate_eur_per_minute(self.config),
+        )
         self._track(
             "openai_realtime_started",
             session_id,
@@ -462,6 +487,7 @@ class DictationController:
                 self._process_and_output_transcript(result.transcript, mode, live_chunk=False, session_id=session_id)
 
             if self._session_active(session_id):
+                self._publish_realtime_operation_cost(session_id)
                 self._finish_session(session_id, "finished", mode, transcript=result.transcript)
                 if mode == OutputMode.CLIPBOARD:
                     self._set_state(DictationState.IDLE, "Text in Zwischenablage")
@@ -496,6 +522,7 @@ class DictationController:
             delivered_chars=result.delivered_chars,
         )
         self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback laeuft")
+        self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
         if result.delivered_any and mode == OutputMode.LIVE_PASTE:
             transcript = self._transcribe_audio_path(final_audio, session_id)
             if transcript:
@@ -1088,6 +1115,84 @@ class DictationController:
         if self.status_callback is not None:
             self.status_callback(DictationState.IDLE, message)
 
+    def _publish_runtime_info(
+        self,
+        backend_label: str,
+        model_label: str,
+        online: bool,
+        cost_rate_eur_per_minute: float,
+    ) -> None:
+        if self.runtime_info_callback is None:
+            return
+        try:
+            self.runtime_info_callback(backend_label, model_label, online, cost_rate_eur_per_minute)
+        except Exception:
+            LOG.debug("Runtime info callback failed", exc_info=True)
+
+    def _publish_realtime_operation_cost(self, session_id: int) -> None:
+        model = self.config.openai_realtime_transcription_model
+        elapsed_seconds = self._session_elapsed_ms(session_id) / 1000.0
+        estimated_cost = estimate_transcription_cost_eur(self.config, elapsed_seconds, model)
+        usage_label = f"{elapsed_seconds:.1f}s"
+        self._publish_last_operation_cost(estimated_cost, "geschaetzt", usage_label)
+        self._track(
+            "openai_realtime_cost_estimated",
+            session_id,
+            model=model,
+            elapsed_seconds=round(elapsed_seconds, 3),
+            cost_eur=round(estimated_cost, 8),
+        )
+
+        start_epoch, end_epoch = self._session_epoch_window(session_id, elapsed_seconds)
+        threading.Thread(
+            target=self._run_openai_usage_lookup,
+            args=(session_id, start_epoch, end_epoch, model),
+            daemon=True,
+        ).start()
+
+    def _run_openai_usage_lookup(
+        self,
+        session_id: int,
+        start_epoch: float,
+        end_epoch: float,
+        model: str,
+    ) -> None:
+        usage = query_openai_transcription_usage(self.config, start_epoch, end_epoch, model)
+        if usage is None:
+            self._track(
+                "openai_usage_lookup_unavailable",
+                session_id,
+                model=model,
+            )
+            return
+        with self._lock:
+            if session_id != self._session_id:
+                return
+        self._publish_last_operation_cost(usage.cost_eur, "OpenAI Usage", usage.usage_label())
+        self._track(
+            "openai_usage_lookup_completed",
+            session_id,
+            model=model,
+            seconds=round(usage.seconds, 3),
+            requests=usage.requests,
+            cost_eur=round(usage.cost_eur, 8),
+        )
+
+    def _publish_last_operation_cost(self, cost_eur: float, source: str, usage_label: str = "") -> None:
+        if self.cost_info_callback is None:
+            return
+        try:
+            self.cost_info_callback(cost_eur, source, usage_label)
+        except Exception:
+            LOG.debug("Cost info callback failed", exc_info=True)
+
+    def _session_epoch_window(self, session_id: int, elapsed_seconds: float) -> tuple[float, float]:
+        end_epoch = time.time()
+        start_epoch = self._session_started_epoch.get(session_id)
+        if start_epoch is None:
+            start_epoch = end_epoch - max(0.0, elapsed_seconds)
+        return start_epoch, end_epoch
+
     def _session_elapsed_ms(self, session_id: int) -> int:
         started_at = self._session_started_at.get(session_id)
         if started_at is None:
@@ -1110,6 +1215,7 @@ class DictationController:
             **self._transcript_fields(transcript),
         )
         self._session_started_at.pop(session_id, None)
+        self._session_started_epoch.pop(session_id, None)
 
     def _transcript_fields(self, text: str, prefix: str = "transcript") -> dict[str, object]:
         if self.tracker is None:
@@ -1172,6 +1278,7 @@ class DictationController:
             elapsed_ms=self._session_elapsed_ms(session_id),
         )
         self._session_started_at.pop(session_id, None)
+        self._session_started_epoch.pop(session_id, None)
         self._stop_live_worker(wait=False)
         self._cancel_realtime_session()
         self.chunks.stop_fast(wait=False)
@@ -1200,3 +1307,7 @@ def _missing_realtime_suffix(transcript: str, delivered_text: str) -> str:
     if full.startswith(delivered):
         return full[len(delivered) :].strip()
     return ""
+
+
+def _openai_realtime_cost_rate_eur_per_minute(config: AppConfig) -> float:
+    return transcription_rate_eur_per_minute(config, config.openai_realtime_transcription_model)

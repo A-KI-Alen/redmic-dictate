@@ -71,6 +71,16 @@ before starting the app:
 
 Do not put the API key into `config.toml` or commit it to Git.
 
+Optional: if you want RedMic to replace the immediate per-dictation estimate
+with OpenAI usage data after a run, set an admin usage key separately:
+
+```powershell
+[Environment]::SetEnvironmentVariable("OPENAI_ADMIN_KEY", "DEIN_OPENAI_ADMIN_KEY", "User")
+```
+
+Without `OPENAI_ADMIN_KEY`, the overlay still shows the active backend, model,
+and an estimated EUR amount for the last OpenAI dictation.
+
 To start RedMic Dictate automatically when you log in to Windows:
 
 ```powershell
@@ -139,6 +149,13 @@ openai_realtime_finish_timeout_seconds = 7.0
 openai_realtime_connect_timeout_seconds = 6.0
 openai_realtime_send_interval_ms = 120
 openai_realtime_noise_reduction = "near_field"
+openai_realtime_mini_transcribe_eur_per_minute = 0.0028
+openai_realtime_transcribe_eur_per_minute = 0.0056
+openai_usage_admin_key_env = "OPENAI_ADMIN_KEY"
+openai_usage_project_id = ""
+openai_usage_api_key_id = ""
+openai_usage_poll_delay_seconds = 20.0
+openai_usage_poll_attempts = 3
 silence_rms_threshold = 60
 live_streaming = false
 live_chunk_seconds = 4

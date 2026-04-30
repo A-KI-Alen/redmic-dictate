@@ -29,6 +29,12 @@ waehrend der Aufnahme ins aktive Feld geschrieben. Jeder fertige Text bleibt
 zusaetzlich in der Zwischenablage, damit
 du ihn bei Bedarf mit `Ctrl+V` oder `Windows+V` wieder einfuegen kannst.
 
+Im roten Statusfeld steht auch, ob RedMic gerade lokal oder online laeuft,
+welches Modell genutzt wird und wie viel der letzte OpenAI-Vorgang ungefaehr
+gekostet hat. Wenn ein `OPENAI_ADMIN_KEY` gesetzt ist, fragt RedMic die OpenAI
+Usage API nach Abschluss im Hintergrund ab und ersetzt die Schaetzung, sobald
+die Daten verfuegbar sind.
+
 ## Installation
 
 Einmalig im Projektordner ausfuehren:
@@ -158,6 +164,13 @@ openai_realtime_transcription_model = "gpt-4o-mini-transcribe"
 openai_realtime_fallback_model = "gpt-4o-transcribe"
 openai_realtime_commit_seconds = 3.0
 openai_realtime_finish_timeout_seconds = 7.0
+openai_realtime_mini_transcribe_eur_per_minute = 0.0028
+openai_realtime_transcribe_eur_per_minute = 0.0056
+openai_usage_admin_key_env = "OPENAI_ADMIN_KEY"
+openai_usage_project_id = ""
+openai_usage_api_key_id = ""
+openai_usage_poll_delay_seconds = 20.0
+openai_usage_poll_attempts = 3
 ```
 
 Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
@@ -174,6 +187,18 @@ Fuer den Realtime-Modus muss der Key als Windows-Umgebungsvariable gesetzt sein:
 Danach RedMic neu starten. Den Key nicht in die Config-Datei und nicht in Git
 schreiben. Ohne Key startet RedMic weiter und nutzt automatisch den lokalen
 Fallback.
+
+Fuer die nachtraegliche Kosten-/Usage-Abfrage brauchst du zusaetzlich einen
+OpenAI Admin-Usage-Key mit Zugriff auf Organisations-Usage. Der normale
+Transkriptions-Key reicht fuer das Diktat, aber haeufig nicht fuer die
+Usage-Abfrage:
+
+```powershell
+[Environment]::SetEnvironmentVariable("OPENAI_ADMIN_KEY", "DEIN_OPENAI_ADMIN_KEY", "User")
+```
+
+Wenn dieser Key fehlt, bleibt die Kostenanzeige eine lokale Schaetzung fuer den
+letzten OpenAI-Vorgang.
 
 ## Modell und Geschwindigkeit
 

@@ -40,7 +40,7 @@ def run_overlay(config: AppConfig) -> None:
 
     size = max(54, int(config.overlay_size))
     hud_width = 560
-    hud_height = 148
+    hud_height = 172
 
     root = tk.Tk()
     root.withdraw()
@@ -169,6 +169,14 @@ def draw_hud(
     canvas.create_text(94, 20, text=headline, fill=WHITE, anchor="nw", font=("Segoe UI", 15, "bold"))
     canvas.create_text(94, 45, text=subline, fill="#f5c7cd", anchor="nw", font=("Segoe UI", 10))
     canvas.create_text(
+        94,
+        64,
+        text=_runtime_label(status),
+        fill="#d9dde5",
+        anchor="nw",
+        font=("Segoe UI", 9, "bold"),
+    )
+    canvas.create_text(
         width - 22,
         22,
         text=_elapsed_label(status),
@@ -176,7 +184,7 @@ def draw_hud(
         anchor="ne",
         font=("Segoe UI", 16, "bold"),
     )
-    draw_level_ticker(canvas, 94, 68, width - 112, 30, level_history, processing, angle)
+    draw_level_ticker(canvas, 94, 86, width - 112, 30, level_history, processing, angle)
 
     stop = _hotkey_label(status.get("stop_hotkey", "space"))
     cancel = _hotkey_label(status.get("cancel_hotkey", "esc"))
@@ -185,7 +193,7 @@ def draw_hud(
     clipboard = _hotkey_label(status.get("clipboard_hotkey", "alt+shift+y"))
     canvas.create_text(
         94,
-        105,
+        124,
         text=f"Stop: {stop}    Abbruch: {cancel}",
         fill=WHITE,
         anchor="nw",
@@ -193,7 +201,7 @@ def draw_hud(
     )
     canvas.create_text(
         94,
-        124,
+        146,
         text=f"Hart: {hard_abort}    Live: {live}    Zwischenablage: {clipboard}",
         fill="#d9dde5",
         anchor="nw",
@@ -328,6 +336,12 @@ def read_status(config: AppConfig) -> dict[str, Any]:
         "audio_level": 0.0,
         "recording_started_at": 0.0,
         "recording_seconds": 0,
+        "backend_label": "Lokal",
+        "backend_online": False,
+        "model_label": config.resolved_model(),
+        "last_operation_cost_eur": 0.0,
+        "last_operation_cost_source": "noch kein Vorgang",
+        "last_operation_usage_label": "",
     }
     try:
         status = json.loads(overlay_status_path().read_text(encoding="utf-8"))
@@ -358,6 +372,18 @@ def _elapsed_label(status: dict[str, Any]) -> str:
     else:
         seconds = int(_number(status.get("recording_seconds", 0)))
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def _runtime_label(status: dict[str, Any]) -> str:
+    backend = str(status.get("backend_label") or "Lokal")
+    model = str(status.get("model_label") or "").strip()
+    cost = _number(status.get("last_operation_cost_eur", 0.0))
+    source = str(status.get("last_operation_cost_source") or "geschaetzt").strip()
+    usage = str(status.get("last_operation_usage_label") or "").strip()
+    model_part = f" | {model}" if model else ""
+    prefix = "" if source.lower().startswith("openai") else "ca. "
+    usage_part = f" | {usage}" if usage else ""
+    return f"{backend}{model_part} | Vorgang: {prefix}{cost:.4f} \u20ac{usage_part}"
 
 
 def _number(value: object) -> float:

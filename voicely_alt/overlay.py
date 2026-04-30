@@ -25,6 +25,13 @@ class RecordingOverlay:
         self._audio_level = 0.0
         self._recording_started_at = 0.0
         self._recording_seconds = 0
+        self._backend_label = "Lokal"
+        self._backend_online = False
+        self._model_label = config.resolved_model()
+        self._cost_rate_eur_per_minute = 0.0
+        self._last_operation_cost_eur = 0.0
+        self._last_operation_cost_source = "noch kein Vorgang"
+        self._last_operation_usage_label = ""
 
     def show(self, mode: str = "recording", message: str = "") -> None:
         if not self.config.recording_overlay:
@@ -94,6 +101,27 @@ class RecordingOverlay:
             self._audio_level = max(0.0, min(1.0, float(level)))
             self._write_status_locked()
 
+    def set_runtime_info(
+        self,
+        backend_label: str,
+        model_label: str,
+        online: bool,
+        cost_rate_eur_per_minute: float,
+    ) -> None:
+        with self._lock:
+            self._backend_label = backend_label
+            self._backend_online = bool(online)
+            self._model_label = model_label
+            self._cost_rate_eur_per_minute = max(0.0, float(cost_rate_eur_per_minute))
+            self._write_status_locked()
+
+    def set_last_operation_cost(self, cost_eur: float, source: str, usage_label: str = "") -> None:
+        with self._lock:
+            self._last_operation_cost_eur = max(0.0, float(cost_eur))
+            self._last_operation_cost_source = source.strip() or "geschaetzt"
+            self._last_operation_usage_label = usage_label.strip()
+            self._write_status_locked()
+
     def _stop_process(self) -> None:
         if self._process is None:
             return
@@ -123,6 +151,12 @@ class RecordingOverlay:
                 "recording_seconds": max(0, int(time.time() - self._recording_started_at))
                 if self._recording_started_at
                 else self._recording_seconds,
+                "backend_label": self._backend_label,
+                "backend_online": self._backend_online,
+                "model_label": self._model_label,
+                "last_operation_cost_eur": round(self._last_operation_cost_eur, 8),
+                "last_operation_cost_source": self._last_operation_cost_source,
+                "last_operation_usage_label": self._last_operation_usage_label,
                 "updated_at": time.time(),
             }
             tmp_path = status_path.with_suffix(".tmp")

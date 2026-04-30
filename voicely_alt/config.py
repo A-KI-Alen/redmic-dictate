@@ -47,6 +47,14 @@ class AppConfig:
     openai_realtime_connect_timeout_seconds: float = 6.0
     openai_realtime_send_interval_ms: int = 120
     openai_realtime_noise_reduction: str = "near_field"
+    openai_realtime_mini_transcribe_eur_per_minute: float = 0.0028
+    openai_realtime_transcribe_eur_per_minute: float = 0.0056
+    openai_usage_admin_key_env: str = "OPENAI_ADMIN_KEY"
+    openai_usage_project_id: str = ""
+    openai_usage_api_key_id: str = ""
+    openai_usage_poll_delay_seconds: float = 20.0
+    openai_usage_poll_attempts: int = 3
+    openai_cost_usd_to_eur_rate: float = 0.93
     host: str = "127.0.0.1"
     port: int = 18080
     sample_rate: int = 16000

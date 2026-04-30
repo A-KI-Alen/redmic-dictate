@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import wave
 import os
+import time
 from queue import Queue
 from pathlib import Path
 
@@ -125,10 +126,13 @@ def _write_test_wav(path: Path, frames: int = 160) -> None:
 class ControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         self._openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
+        self._openai_admin_key = os.environ.pop("OPENAI_ADMIN_KEY", None)
 
     def tearDown(self) -> None:
         if self._openai_api_key is not None:
             os.environ["OPENAI_API_KEY"] = self._openai_api_key
+        if self._openai_admin_key is not None:
+            os.environ["OPENAI_ADMIN_KEY"] = self._openai_admin_key
 
     def test_start_stop_transcribes_and_pastes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -504,6 +508,27 @@ class ControllerTests(unittest.TestCase):
         )
 
         self.assertEqual(missing, "zweiter Teil")
+
+    def test_realtime_cost_callback_receives_last_operation_estimate(self) -> None:
+        costs = []
+        controller = DictationController(
+            config=AppConfig(openai_usage_poll_attempts=1, openai_usage_poll_delay_seconds=0),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=FakePaste(),
+            controls=FakeControls(),
+            background=False,
+            cost_info_callback=lambda cost, source, usage: costs.append((cost, source, usage)),
+        )
+        controller._session_id = 1
+        controller._session_started_at[1] = time.monotonic() - 30.0
+        controller._session_started_epoch[1] = time.time() - 30.0
+
+        controller._publish_realtime_operation_cost(1)
+
+        self.assertEqual(costs[0][1], "geschaetzt")
+        self.assertEqual(costs[0][2], "30.0s")
+        self.assertAlmostEqual(costs[0][0], 30.0 * 0.0028 / 60.0, places=4)
 
 
 if __name__ == "__main__":

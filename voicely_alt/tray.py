@@ -42,6 +42,23 @@ class TrayApp:
     def set_audio_level(self, level: float) -> None:
         self.overlay.set_level(level)
 
+    def set_runtime_info(
+        self,
+        backend_label: str,
+        model_label: str,
+        online: bool,
+        cost_rate_eur_per_minute: float,
+    ) -> None:
+        self.overlay.set_runtime_info(
+            backend_label,
+            model_label,
+            online,
+            cost_rate_eur_per_minute,
+        )
+
+    def set_last_operation_cost(self, cost_eur: float, source: str, usage_label: str = "") -> None:
+        self.overlay.set_last_operation_cost(cost_eur, source, usage_label)
+
     def run(self) -> None:
         try:
             import pystray
