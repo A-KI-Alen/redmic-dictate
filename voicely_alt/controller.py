@@ -368,6 +368,7 @@ class DictationController:
             on_text=lambda text: self._on_realtime_text(text, mode, session_id)
             if mode == OutputMode.LIVE_PASTE
             else None,
+            on_progress=lambda done, total: self._on_realtime_progress(done, total, session_id),
         )
         try:
             realtime.start()
@@ -430,6 +431,17 @@ class DictationController:
             live_chunk=True,
             session_id=session_id,
         )
+
+    def _on_realtime_progress(self, done: int, total: int, session_id: int) -> None:
+        with self._lock:
+            if not self._session_active(session_id):
+                return
+            if self.state != DictationState.TRANSCRIBING:
+                return
+        total = max(0, int(total))
+        done = max(0, min(int(done), total if total else int(done)))
+        label_total = total if total else "?"
+        self._set_state(DictationState.TRANSCRIBING, f"Online verarbeitet {done}/{label_total} Segmente")
 
     def _finish_realtime_recording(
         self,
@@ -521,10 +533,12 @@ class DictationController:
             reason=result.error or "empty_realtime_transcript",
             delivered_chars=result.delivered_chars,
         )
-        self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback laeuft")
+        self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback 0/1 Datei")
         self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
         if result.delivered_any and mode == OutputMode.LIVE_PASTE:
             transcript = self._transcribe_audio_path(final_audio, session_id)
+            if self._session_active(session_id):
+                self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback 1/1 Datei")
             if transcript:
                 self.paste_target.copy_text(transcript)
                 self._track(
@@ -543,6 +557,8 @@ class DictationController:
             return
 
         wrote = self._transcribe_and_output(final_audio, mode, live_chunk=False, session_id=session_id)
+        if self._session_active(session_id):
+            self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback 1/1 Datei")
         self._finish_session(session_id, "fallback_finished" if wrote else "no_text", mode)
         if mode == OutputMode.CLIPBOARD:
             self._set_state(DictationState.IDLE, "Text in Zwischenablage")

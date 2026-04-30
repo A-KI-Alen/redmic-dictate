@@ -5,6 +5,7 @@ import unittest
 from voicely_alt.config import AppConfig
 from voicely_alt.openai_realtime import (
     OpenAIRealtimeTranscriptionSession,
+    _realtime_url,
     _session_update_payload,
 )
 
@@ -28,6 +29,18 @@ class OpenAIRealtimeTests(unittest.TestCase):
         self.assertEqual(audio_input["transcription"]["model"], "gpt-4o-mini-transcribe")
         self.assertEqual(audio_input["transcription"]["language"], "de")
         self.assertIsNone(audio_input["turn_detection"])
+
+    def test_realtime_url_requests_transcription_intent(self) -> None:
+        url = _realtime_url(
+            AppConfig(
+                openai_realtime_url="wss://api.openai.com/v1/realtime?foo=bar&model=gpt-realtime",
+                openai_realtime_session_model="gpt-realtime",
+            )
+        )
+
+        self.assertIn("foo=bar", url)
+        self.assertIn("intent=transcription", url)
+        self.assertNotIn("model=", url)
 
     def test_completed_items_are_delivered_in_commit_order(self) -> None:
         delivered = []
@@ -68,6 +81,34 @@ class OpenAIRealtimeTests(unittest.TestCase):
         self.assertEqual(delivered, ["erster Teil", "zweiter Teil"])
         self.assertEqual(result.transcript, "erster Teil zweiter Teil")
         self.assertTrue(result.delivered_any)
+
+    def test_progress_counts_empty_and_completed_segments(self) -> None:
+        progress = []
+        realtime = OpenAIRealtimeTranscriptionSession(
+            AppConfig(),
+            FakeAudioSource(),
+            on_progress=lambda done, total: progress.append((done, total)),
+        )
+        realtime._commits_sent = 2
+
+        realtime._handle_event({"type": "input_audio_buffer.committed", "item_id": "a"})
+        realtime._handle_event({"type": "input_audio_buffer.committed", "item_id": "b"})
+        realtime._handle_event(
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "a",
+                "transcript": "",
+            }
+        )
+        realtime._handle_event(
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "b",
+                "transcript": "Text",
+            }
+        )
+
+        self.assertEqual(progress[-1], (2, 2))
 
 
 if __name__ == "__main__":

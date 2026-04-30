@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .audio import resample_pcm16_mono
 from .config import AppConfig
@@ -43,6 +44,7 @@ class RealtimeTranscriptResult:
 
 
 RealtimeTextCallback = Callable[[str], bool | None]
+RealtimeProgressCallback = Callable[[int, int], None]
 
 
 class OpenAIRealtimeTranscriptionSession:
@@ -51,13 +53,16 @@ class OpenAIRealtimeTranscriptionSession:
         config: AppConfig,
         audio_source: AudioStreamSource,
         on_text: RealtimeTextCallback | None = None,
+        on_progress: RealtimeProgressCallback | None = None,
     ):
         self.config = config
         self.audio_source = audio_source
         self.on_text = on_text
+        self.on_progress = on_progress
         self._ws = None
         self._stop_event = threading.Event()
         self._ready_event = threading.Event()
+        self._configured_event = threading.Event()
         self._lock = threading.RLock()
         self._sender_thread: threading.Thread | None = None
         self._receiver_thread: threading.Thread | None = None
@@ -65,6 +70,7 @@ class OpenAIRealtimeTranscriptionSession:
         self._commits_sent = 0
         self._commit_order: list[str] = []
         self._completed: dict[str, str] = {}
+        self._completed_empty: set[str] = set()
         self._completed_unknown: list[str] = []
         self._delivered: set[str] = set()
         self._delivered_texts: list[str] = []
@@ -94,15 +100,34 @@ class OpenAIRealtimeTranscriptionSession:
                 timeout=timeout,
             )
             self._ws.settimeout(0.5)
-            self._send(_session_update_payload(self.config))
         except Exception as exc:
             self.close()
             raise RealtimeUnavailableError("Could not connect to OpenAI Realtime API.") from exc
 
         self._stop_event.clear()
-        self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
+        self._ready_event.clear()
+        self._configured_event.clear()
         self._receiver_thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._receiver_thread.start()
+        try:
+            self._send(_session_update_payload(self.config))
+        except Exception as exc:
+            self.close()
+            raise RealtimeUnavailableError("Could not configure OpenAI Realtime transcription.") from exc
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._configured_event.wait(timeout=0.05):
+                break
+            reason = self.failed_reason()
+            if reason:
+                self.close()
+                raise RealtimeUnavailableError(reason)
+        else:
+            self.close()
+            raise RealtimeUnavailableError("OpenAI Realtime transcription session was not accepted.")
+
+        self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
         self._sender_thread.start()
 
     def stop(self) -> RealtimeTranscriptResult:
@@ -114,8 +139,10 @@ class OpenAIRealtimeTranscriptionSession:
         deadline = time.monotonic() + max(0.5, float(self.config.openai_realtime_finish_timeout_seconds))
         while time.monotonic() < deadline:
             with self._lock:
-                pending = len(self._completed) < len(self._commit_order)
+                completed, expected = self._progress_counts_locked()
+                pending = len(self._commit_order) < self._commits_sent or completed < len(self._commit_order)
                 error = self._error
+            self._notify_progress(completed, expected)
             if error or not pending:
                 break
             time.sleep(0.1)
@@ -213,7 +240,9 @@ class OpenAIRealtimeTranscriptionSession:
         target_rate = int(self.config.openai_realtime_audio_rate)
         min_audio_bytes = int(target_rate * 2 * 0.35)
         with self._lock:
-            if self._uncommitted_bytes < min_audio_bytes:
+            if self._uncommitted_bytes <= 0:
+                return
+            if self._uncommitted_bytes < min_audio_bytes and not force:
                 return
             self._uncommitted_bytes = 0
             self._commits_sent += 1
@@ -221,6 +250,8 @@ class OpenAIRealtimeTranscriptionSession:
         try:
             self._send({"type": "input_audio_buffer.commit", "event_id": _event_id("commit")})
         except Exception as exc:
+            with self._lock:
+                self._commits_sent = max(0, self._commits_sent - 1)
             self._set_error(f"Could not commit OpenAI Realtime audio buffer: {exc}")
             if force:
                 return
@@ -234,8 +265,12 @@ class OpenAIRealtimeTranscriptionSession:
 
     def _handle_event(self, event: dict[str, object]) -> None:
         event_type = str(event.get("type", ""))
-        if event_type in {"session.created", "session.updated"}:
+        if event_type in {"session.created", "transcription_session.created"}:
             self._ready_event.set()
+            return
+        if event_type in {"session.updated", "transcription_session.updated"}:
+            self._ready_event.set()
+            self._configured_event.set()
             return
         if event_type == "input_audio_buffer.committed":
             item_id = str(event.get("item_id", "")).strip()
@@ -243,17 +278,24 @@ class OpenAIRealtimeTranscriptionSession:
                 with self._lock:
                     if item_id not in self._commit_order:
                         self._commit_order.append(item_id)
+                    completed, expected = self._progress_counts_locked()
+                self._notify_progress(completed, expected)
                 self._deliver_ready_texts()
             return
         if event_type == "conversation.item.input_audio_transcription.completed":
             item_id = str(event.get("item_id", "")).strip()
             transcript = str(event.get("transcript", "")).strip()
-            if transcript:
-                with self._lock:
+            with self._lock:
+                if transcript:
                     if item_id:
                         self._completed[item_id] = transcript
                     else:
                         self._completed_unknown.append(transcript)
+                elif item_id:
+                    self._completed_empty.add(item_id)
+                completed, expected = self._progress_counts_locked()
+            self._notify_progress(completed, expected)
+            if transcript:
                 self._deliver_ready_texts()
             return
         if event_type == "conversation.item.input_audio_transcription.failed":
@@ -305,14 +347,43 @@ class OpenAIRealtimeTranscriptionSession:
                 self._error = message
         LOG.warning(message)
 
+    def _progress_counts_locked(self) -> tuple[int, int]:
+        completed = 0
+        for item_id in self._commit_order:
+            if item_id in self._completed or item_id in self._completed_empty:
+                completed += 1
+        completed += len(self._completed_unknown)
+        return completed, self._commits_sent
+
+    def _notify_progress(self, completed: int, expected: int) -> None:
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(completed, expected)
+        except Exception:
+            LOG.debug("Realtime progress callback failed", exc_info=True)
+
 
 def is_openai_realtime_enabled(config: AppConfig) -> bool:
     return str(config.backend).lower() in {"openai_realtime", "hybrid_openai_realtime"}
 
 
 def _realtime_url(config: AppConfig) -> str:
-    separator = "&" if "?" in config.openai_realtime_url else "?"
-    return f"{config.openai_realtime_url}{separator}model={config.openai_realtime_session_model}"
+    return _append_query_params(
+        config.openai_realtime_url,
+        {"intent": "transcription"},
+        remove={"model"},
+    )
+
+
+def _append_query_params(url: str, params: dict[str, str], remove: set[str] | None = None) -> str:
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    for key in remove or set():
+        query.pop(key, None)
+    for key, value in params.items():
+        query.setdefault(key, value)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def _session_update_payload(config: AppConfig) -> dict[str, object]:
