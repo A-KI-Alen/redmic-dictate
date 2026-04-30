@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+import sys
 
 from voicely_alt.config import AppConfig
 from voicely_alt.hotkeys import KeyboardHotkeyManager, _normalize_hotkey
@@ -123,6 +124,37 @@ class HotkeyTests(unittest.TestCase):
         manager.disable_recording_controls(force=True)
 
         self.assertEqual(keyboard.removed, [("block", "space"), ("block", "esc")])
+
+    def test_global_hard_abort_does_not_suppress_space(self) -> None:
+        keyboard = FakeKeyboard()
+        manager = KeyboardHotkeyManager(AppConfig())
+
+        previous_keyboard = sys.modules.get("keyboard")
+        sys.modules["keyboard"] = keyboard
+        try:
+            manager.start(lambda: None, lambda: None, lambda: None, lambda: None, lambda: None)
+        finally:
+            if previous_keyboard is None:
+                sys.modules.pop("keyboard", None)
+            else:
+                sys.modules["keyboard"] = previous_keyboard
+
+        hard_abort = keyboard.hotkeys[-1]
+        self.assertEqual(hard_abort[1], "space+esc")
+        self.assertFalse(hard_abort[3])
+
+    def test_global_hard_abort_is_debounced(self) -> None:
+        keyboard = FakeKeyboard()
+        manager = KeyboardHotkeyManager(AppConfig())
+        manager._keyboard = keyboard
+        calls = []
+        manager._on_hard_abort = lambda: calls.append("abort")
+
+        keyboard.pressed.update({"space", "esc"})
+        manager._handle_global_hard_abort()
+        manager._handle_global_hard_abort()
+
+        self.assertEqual(calls, ["abort"])
 
 
 if __name__ == "__main__":

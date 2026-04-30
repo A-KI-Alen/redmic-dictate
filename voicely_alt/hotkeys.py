@@ -32,6 +32,7 @@ class KeyboardHotkeyManager:
         self._recording_monitor_stop: threading.Event | None = None
         self._recording_monitor_thread: threading.Thread | None = None
         self._start_key_pending = False
+        self._hard_abort_latched = False
 
     def start(
         self,
@@ -54,8 +55,8 @@ class KeyboardHotkeyManager:
             self._start_handles = self._register_start_hotkeys(on_live_start, on_clipboard_start)
             self._hard_abort_handle = keyboard.add_hotkey(
                 _normalize_hotkey(self.config.hard_abort_hotkey),
-                lambda: self._safe_call(on_hard_abort),
-                suppress=True,
+                self._handle_global_hard_abort,
+                suppress=False,
                 trigger_on_release=False,
             )
             LOG.info("Registered live hotkey: %s", self.config.live_hotkey)
@@ -318,6 +319,27 @@ class KeyboardHotkeyManager:
     def _handle_cancel_key_down(self) -> None:
         self._handle_cancel_key()
 
+    def _handle_global_hard_abort(self) -> None:
+        with self._lock:
+            if self._hard_abort_latched:
+                return
+            self._hard_abort_latched = True
+            callback = self._on_hard_abort
+
+        if callback is not None:
+            self._safe_call(callback)
+
+        threading.Thread(target=self._release_hard_abort_latch, daemon=True).start()
+
+    def _release_hard_abort_latch(self) -> None:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if not self._hotkey_parts_pressed(self.config.hard_abort_hotkey):
+                break
+            time.sleep(0.05)
+        with self._lock:
+            self._hard_abort_latched = False
+
     def _handle_stop_key(self) -> None:
         with self._lock:
             if self._stop_pending:
@@ -355,6 +377,12 @@ class KeyboardHotkeyManager:
         except Exception:
             LOG.debug("Could not read key state for %s", hotkey, exc_info=True)
             return False
+
+    def _hotkey_parts_pressed(self, hotkey: str) -> bool:
+        parts = [part for part in _normalize_hotkey(hotkey).split("+") if part]
+        if not parts:
+            return False
+        return all(self._is_pressed(part) for part in parts)
 
 
 def _normalize_hotkey(hotkey: str) -> str:
