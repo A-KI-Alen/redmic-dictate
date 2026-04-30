@@ -113,6 +113,8 @@ class DictationController:
         self._session_started_at: dict[int, float] = {}
         self._session_started_epoch: dict[int, float] = {}
         self._progressive_pasted_chunks: set[int] = set()
+        self._late_realtime_text: dict[int, list[str]] = {}
+        self._last_idle_hard_abort_at = 0.0
         self._realtime_session: OpenAIRealtimeTranscriptionSession | None = None
         self._level_stop_event: threading.Event | None = None
         self._level_thread: threading.Thread | None = None
@@ -136,6 +138,7 @@ class DictationController:
                 self._session_started_at[session_id] = time.monotonic()
                 self._session_started_epoch[session_id] = time.time()
                 self._progressive_pasted_chunks = set()
+                self._late_realtime_text.clear()
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self._track(
@@ -152,8 +155,6 @@ class DictationController:
                 self._track("recording_started", session_id, mode=mode.value)
                 self.chunks.reset()
                 self._start_level_worker(session_id)
-                if self.controls is not None:
-                    self.controls.enable_recording_controls()
                 realtime_started = self._try_start_realtime(session_id, mode)
                 if realtime_started:
                     if mode == OutputMode.CLIPBOARD:
@@ -176,6 +177,8 @@ class DictationController:
                     if self.config.background_chunking:
                         self.chunks.start(session_id)
                     self._set_state(DictationState.RECORDING, "Clipboard-Aufnahme laeuft")
+                if self.controls is not None:
+                    self.controls.enable_recording_controls()
                 self._restore_focus_target()
                 return True
             except Exception as exc:
@@ -273,6 +276,7 @@ class DictationController:
                 )
                 self._session_started_at.pop(session_id, None)
                 self._session_started_epoch.pop(session_id, None)
+                self._late_realtime_text.pop(session_id, None)
                 self._set_state(DictationState.IDLE, "Aufnahme abgebrochen")
                 return True
             except Exception as exc:
@@ -281,6 +285,19 @@ class DictationController:
 
     def hard_abort(self) -> bool:
         with self._lock:
+            if self.state == DictationState.IDLE and self._realtime_session is None:
+                if self.controls is not None:
+                    self.controls.disable_recording_controls(force=True)
+                self._stop_live_worker(wait=False)
+                self._stop_level_worker(wait=False)
+                self.chunks.clear(delete_audio=True)
+                self._late_realtime_text.clear()
+                now = time.monotonic()
+                if now - self._last_idle_hard_abort_at >= 2.0:
+                    self._last_idle_hard_abort_at = now
+                    self._track("idle_hard_abort", self._session_id)
+                return True
+
             session_id = self._session_id
             self._session_id += 1
             self._stop_live_worker(wait=False)
@@ -304,6 +321,7 @@ class DictationController:
             )
             self._session_started_at.pop(session_id, None)
             self._session_started_epoch.pop(session_id, None)
+            self._late_realtime_text.clear()
 
         self._close_processing_backends()
         self._set_state(DictationState.IDLE, "Hart abgebrochen")
@@ -348,6 +366,7 @@ class DictationController:
                     LOG.debug("Failed to cancel active recording during shutdown", exc_info=True)
             self._session_id += 1
             self.chunks.clear(delete_audio=True)
+            self._late_realtime_text.clear()
             self._close_processing_backends()
             self._track("app_shutdown", None, active_session_id=self._session_id)
             self._set_state(DictationState.IDLE, "Beendet")
@@ -425,16 +444,23 @@ class DictationController:
     def _on_realtime_text(self, text: str, mode: OutputMode, session_id: int) -> bool:
         if mode != OutputMode.LIVE_PASTE:
             return False
+        buffer_late = False
         with self._lock:
             if not self._session_active(session_id):
                 return False
-            if self.state not in {DictationState.RECORDING, DictationState.TRANSCRIBING}:
+            state = self.state
+            if state == DictationState.TRANSCRIBING:
+                buffer_late = True
+            elif state != DictationState.RECORDING:
                 return False
+        if buffer_late:
+            return self._buffer_late_realtime_text(text, session_id)
         return self._process_and_output_transcript(
             text,
             OutputMode.LIVE_PASTE,
             live_chunk=True,
             session_id=session_id,
+            allowed_states={DictationState.RECORDING},
         )
 
     def _on_realtime_progress(self, done: int, total: int, session_id: int) -> None:
@@ -473,6 +499,8 @@ class DictationController:
                 if final_audio is not None:
                     unlink_audio(final_audio)
                 return
+            if mode == OutputMode.LIVE_PASTE:
+                self._flush_late_realtime_text(mode, session_id)
             if result.error and not result.transcript:
                 self._fallback_after_realtime(final_audio, mode, session_id, result)
                 final_audio = None
@@ -521,6 +549,7 @@ class DictationController:
         finally:
             if final_audio is not None:
                 unlink_audio(final_audio)
+            self._pop_late_realtime_text(session_id)
             if self._session_active(session_id):
                 self._disable_recording_controls()
 
@@ -929,6 +958,42 @@ class DictationController:
                 **self._transcript_fields(result.text),
             )
 
+    def _buffer_late_realtime_text(self, text: str, session_id: int) -> bool:
+        cleaned = self._clean_transcript_text(text, session_id).strip()
+        if not cleaned:
+            return False
+        with self._lock:
+            if not self._session_active(session_id):
+                return False
+            if self.state != DictationState.TRANSCRIBING:
+                return False
+            self._late_realtime_text.setdefault(session_id, []).append(cleaned)
+        self._track(
+            "realtime_late_text_buffered",
+            session_id,
+            **self._transcript_fields(cleaned),
+        )
+        return True
+
+    def _flush_late_realtime_text(self, mode: OutputMode, session_id: int) -> bool:
+        if mode != OutputMode.LIVE_PASTE:
+            return False
+        late_text = self._pop_late_realtime_text(session_id)
+        if not late_text:
+            return False
+        return self._process_and_output_transcript(
+            late_text,
+            OutputMode.LIVE_PASTE,
+            live_chunk=True,
+            session_id=session_id,
+            allowed_states={DictationState.TRANSCRIBING},
+        )
+
+    def _pop_late_realtime_text(self, session_id: int) -> str:
+        with self._lock:
+            parts = self._late_realtime_text.pop(session_id, [])
+        return " ".join(part.strip() for part in parts if part.strip()).strip()
+
     def _progressive_pasted_indexes(self, mode: OutputMode) -> set[int]:
         if mode != OutputMode.LIVE_PASTE or not self.config.progressive_live_paste:
             return set()
@@ -941,8 +1006,11 @@ class DictationController:
         mode: OutputMode,
         live_chunk: bool,
         session_id: int,
+        allowed_states: set[DictationState] | None = None,
     ) -> bool:
         if not self._session_active(session_id):
+            return False
+        if allowed_states is not None and not self._session_in_state(session_id, allowed_states):
             return False
         transcript = self._clean_transcript_text(transcript, session_id).strip()
         if not transcript:
@@ -975,6 +1043,8 @@ class DictationController:
             )
             if not self._session_active(session_id):
                 return False
+            if allowed_states is not None and not self._session_in_state(session_id, allowed_states):
+                return False
             if not transcript:
                 if not live_chunk:
                     self._set_state(DictationState.IDLE, "Kein Text erkannt")
@@ -988,6 +1058,8 @@ class DictationController:
             text = _format_live_text(transcript) if live_chunk else transcript
             self._restore_focus_target()
             if not self._session_active(session_id):
+                return False
+            if allowed_states is not None and not self._session_in_state(session_id, allowed_states):
                 return False
             self.paste_target.paste_text(text)
             destination = "active_field"
@@ -1016,6 +1088,10 @@ class DictationController:
     def _session_active(self, session_id: int) -> bool:
         with self._lock:
             return session_id == self._session_id
+
+    def _session_in_state(self, session_id: int, states: set[DictationState]) -> bool:
+        with self._lock:
+            return session_id == self._session_id and self.state in states
 
     def _build_quality_guard_audio(self, final_audio: Path | None, session_id: int) -> Path | None:
         if not self.config.quality_guard_enabled or self.quality_transcriber is None:
@@ -1251,6 +1327,7 @@ class DictationController:
         )
         self._session_started_at.pop(session_id, None)
         self._session_started_epoch.pop(session_id, None)
+        self._late_realtime_text.pop(session_id, None)
 
     def _transcript_fields(self, text: str, prefix: str = "transcript") -> dict[str, object]:
         if self.tracker is None:

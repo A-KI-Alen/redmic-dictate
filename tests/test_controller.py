@@ -501,6 +501,22 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(transcriber.closed)
             self.assertTrue(processor.closed)
 
+    def test_idle_hard_abort_does_not_create_new_session(self) -> None:
+        controller = DictationController(
+            config=AppConfig(),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=FakePaste(),
+            controls=FakeControls(),
+            background=False,
+        )
+        controller._session_id = 7
+
+        self.assertTrue(controller.hard_abort())
+
+        self.assertEqual(controller.state, DictationState.IDLE)
+        self.assertEqual(controller._session_id, 7)
+
     def test_realtime_suffix_calculates_only_unpasted_tail(self) -> None:
         missing = _missing_realtime_suffix(
             "erster Teil zweiter Teil",
@@ -517,7 +533,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(missing, "fehlenden letzten Satz.")
 
-    def test_late_realtime_text_is_accepted_while_transcribing(self) -> None:
+    def test_late_realtime_text_is_buffered_while_transcribing(self) -> None:
         paste = FakePaste()
         controller = DictationController(
             config=AppConfig(),
@@ -533,6 +549,8 @@ class ControllerTests(unittest.TestCase):
 
         self.assertTrue(controller._on_realtime_text("spaetes Segment", OutputMode.LIVE_PASTE, 1))
 
+        self.assertEqual(paste.text, "")
+        self.assertTrue(controller._flush_late_realtime_text(OutputMode.LIVE_PASTE, 1))
         self.assertEqual(paste.text, "spaetes Segment ")
 
     def test_realtime_cost_callback_receives_last_operation_estimate(self) -> None:
