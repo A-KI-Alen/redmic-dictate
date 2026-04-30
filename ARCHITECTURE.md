@@ -7,16 +7,22 @@ long-running background work.
 ## Core Flow
 
 1. `DictationController` starts and stops recording sessions.
-2. `AudioRecorder` captures microphone audio and exposes 5-second WAV chunks.
-3. `ChunkPipeline` transcribes chunks in the background:
+2. `AudioRecorder` captures microphone audio, exposes a non-destructive PCM
+   stream tap for OpenAI Realtime, and still keeps the full recording for local
+   fallback.
+3. `OpenAIRealtimeTranscriptionSession` streams PCM to OpenAI in short commits
+   and delivers completed German transcript parts back to the controller.
+4. If OpenAI Realtime is unavailable or returns no usable text, the controller
+   falls back to the local `ChunkPipeline`.
+5. `ChunkPipeline` transcribes chunks in the background:
    - `base` is the fast path and has priority.
    - `small` is optional quality replacement and never blocks final output.
-4. `DictationController` can progressively paste finished fast chunks while
+6. `DictationController` can progressively paste finished realtime/local chunks while
    retaining the full transcript for clipboard recovery and quality correction.
-5. `DictationController` assembles the final transcript and sends it to
+7. `DictationController` assembles the final transcript and sends it to
    `ClipboardPaste`.
-6. `TrayApp` and `RecordingOverlay` display status, waveform, and progress.
-7. `EventTracker` writes local diagnostic events for later 24-hour reviews.
+8. `TrayApp` and `RecordingOverlay` display status, waveform, and progress.
+9. `EventTracker` writes local diagnostic events for later 24-hour reviews.
 
 ## Module Responsibilities
 
@@ -27,6 +33,11 @@ long-running background work.
 - `chunking.py`
   Owns all chunk queues, worker threads, quality replacement, WAV grouping, temp
   audio cleanup, and transcript assembly from preprocessed parts.
+
+- `openai_realtime.py`
+  Owns WebSocket connection setup, Realtime transcription session updates,
+  non-destructive PCM streaming, periodic audio commits, ordered completion
+  delivery, and local-fallback result reporting.
 
 - `whispercpp.py`
   Starts, warms, validates, refreshes, and calls local whisper.cpp servers.
@@ -50,7 +61,11 @@ long-running background work.
 
 ## Pipeline Invariants
 
-- The `base` path is always the source of fast output.
+- OpenAI Realtime is the default fast-quality path when `OPENAI_API_KEY` is
+  available.
+- The local `base` path remains the guaranteed offline fallback.
+- Realtime streaming never consumes the local recording buffer; fallback always
+  has the full audio.
 - `small` only receives chunks after the matching `base` chunks have completed.
 - `small` is skipped whenever the fast queue has backlog.
 - `small` gets a bounded wait window after `Space`.
@@ -65,6 +80,8 @@ long-running background work.
 ## Stability Notes
 
 - The fast whisper server is warmed at app startup.
+- The OpenAI key value is read only from the configured environment variable and
+  is never written to config, logs, tracking, or docs.
 - Whisper is forced to German with both server options and request fields.
 - Whisper fallback decoding and non-speech tokens are disabled by default.
 - Long-running whisper servers are refreshed after the configured max age.

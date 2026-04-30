@@ -3,12 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 import wave
+import os
 from queue import Queue
 from pathlib import Path
 
 from voicely_alt.chunking import ChunkResult, QualityResult
 from voicely_alt.config import AppConfig
-from voicely_alt.controller import DictationController
+from voicely_alt.controller import DictationController, _missing_realtime_suffix
 from voicely_alt.state import DictationState, OutputMode
 
 
@@ -122,6 +123,13 @@ def _write_test_wav(path: Path, frames: int = 160) -> None:
 
 
 class ControllerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
+
+    def tearDown(self) -> None:
+        if self._openai_api_key is not None:
+            os.environ["OPENAI_API_KEY"] = self._openai_api_key
+
     def test_start_stop_transcribes_and_pastes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "audio.wav"
@@ -488,6 +496,14 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(controls.enabled)
             self.assertTrue(transcriber.closed)
             self.assertTrue(processor.closed)
+
+    def test_realtime_suffix_calculates_only_unpasted_tail(self) -> None:
+        missing = _missing_realtime_suffix(
+            "erster Teil zweiter Teil",
+            "erster Teil",
+        )
+
+        self.assertEqual(missing, "zweiter Teil")
 
 
 if __name__ == "__main__":

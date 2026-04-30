@@ -11,6 +11,12 @@ from .benchmark import benchmark_models, record_sample
 from .chunking import ChunkPipeline, ChunkResult, copy_audio_file, unlink_audio
 from .config import AppConfig
 from .focus import FocusTarget, capture_focus_target
+from .openai_realtime import (
+    OpenAIRealtimeTranscriptionSession,
+    RealtimeTranscriptResult,
+    RealtimeUnavailableError,
+    is_openai_realtime_enabled,
+)
 from .paths import benchmark_sample_path
 from .state import DictationState, OutputMode
 
@@ -92,6 +98,7 @@ class DictationController:
         self._session_id = 0
         self._session_started_at: dict[int, float] = {}
         self._progressive_pasted_chunks: set[int] = set()
+        self._realtime_session: OpenAIRealtimeTranscriptionSession | None = None
         self._level_stop_event: threading.Event | None = None
         self._level_thread: threading.Thread | None = None
         self.chunks = ChunkPipeline(
@@ -131,7 +138,19 @@ class DictationController:
                 self._start_level_worker(session_id)
                 if self.controls is not None:
                     self.controls.enable_recording_controls()
-                if mode == OutputMode.LIVE_PASTE:
+                realtime_started = self._try_start_realtime(session_id, mode)
+                if realtime_started:
+                    if mode == OutputMode.CLIPBOARD:
+                        self._set_state(
+                            DictationState.RECORDING,
+                            "OpenAI Mini Clipboard-Aufnahme laeuft",
+                        )
+                    else:
+                        self._set_state(
+                            DictationState.RECORDING,
+                            "OpenAI Mini Live-Diktat laeuft",
+                        )
+                elif mode == OutputMode.LIVE_PASTE:
                     if self.config.live_streaming:
                         self._start_live_worker(session_id)
                     elif self.config.background_chunking:
@@ -162,7 +181,17 @@ class DictationController:
             try:
                 self._stop_level_worker(wait=False)
                 chunked = False
-                if self.chunks.fast_active():
+                realtime_session = self._realtime_session
+                self._realtime_session = None
+                if realtime_session is not None:
+                    final_audio = self.recorder.stop_if_audio()
+                    if mode == OutputMode.CLIPBOARD:
+                        self._set_state(DictationState.TRANSCRIBING, "OpenAI Mini fuer Zwischenablage laeuft")
+                    else:
+                        self._set_state(DictationState.TRANSCRIBING, "OpenAI Mini wird abgeschlossen")
+                    target = self._finish_realtime_recording
+                    args = (final_audio, mode, session_id, realtime_session)
+                elif self.chunks.fast_active():
                     chunked = True
                     self.chunks.request_stop()
                     final_audio = self.recorder.stop_if_audio()
@@ -213,6 +242,7 @@ class DictationController:
                 session_id = self._session_id
                 self._session_id += 1
                 self._stop_live_worker(wait=False)
+                self._cancel_realtime_session()
                 self.chunks.stop_fast(wait=False)
                 self.chunks.stop_quality(wait=False, close_backend=True)
                 self._stop_level_worker(wait=False)
@@ -237,6 +267,7 @@ class DictationController:
             session_id = self._session_id
             self._session_id += 1
             self._stop_live_worker(wait=False)
+            self._cancel_realtime_session()
             self.chunks.stop_fast(wait=False)
             self.chunks.stop_quality(wait=False, close_backend=True)
             self._stop_level_worker(wait=False)
@@ -286,6 +317,7 @@ class DictationController:
     def shutdown(self) -> None:
         with self._lock:
             self._stop_live_worker(wait=False)
+            self._cancel_realtime_session()
             self.chunks.stop_fast(wait=False)
             self.chunks.stop_quality(wait=False, close_backend=True)
             self._stop_level_worker(wait=False)
@@ -301,6 +333,194 @@ class DictationController:
             self._close_processing_backends()
             self._track("app_shutdown", None, active_session_id=self._session_id)
             self._set_state(DictationState.IDLE, "Beendet")
+
+    def _try_start_realtime(self, session_id: int, mode: OutputMode) -> bool:
+        if not is_openai_realtime_enabled(self.config):
+            return False
+        if not hasattr(self.recorder, "read_stream_chunk") or not hasattr(self.recorder, "actual_sample_rate"):
+            self._track(
+                "openai_realtime_fallback",
+                session_id,
+                reason="recorder_has_no_stream_tap",
+            )
+            return False
+
+        realtime = OpenAIRealtimeTranscriptionSession(
+            self.config,
+            self.recorder,  # type: ignore[arg-type]
+            on_text=lambda text: self._on_realtime_text(text, mode, session_id)
+            if mode == OutputMode.LIVE_PASTE
+            else None,
+        )
+        try:
+            realtime.start()
+        except RealtimeUnavailableError as exc:
+            self._track(
+                "openai_realtime_fallback",
+                session_id,
+                reason=str(exc),
+                fallback_backend=self.config.cloud_fallback,
+            )
+            LOG.info("OpenAI Realtime unavailable; using local fallback: %s", exc)
+            return False
+        except Exception as exc:
+            self._track(
+                "openai_realtime_fallback",
+                session_id,
+                reason=str(exc),
+                fallback_backend=self.config.cloud_fallback,
+            )
+            LOG.warning("OpenAI Realtime start failed; using local fallback", exc_info=True)
+            return False
+
+        self._realtime_session = realtime
+        self._track(
+            "openai_realtime_started",
+            session_id,
+            mode=mode.value,
+            session_model=self.config.openai_realtime_session_model,
+            transcription_model=self.config.openai_realtime_transcription_model,
+            commit_seconds=self.config.openai_realtime_commit_seconds,
+        )
+        return True
+
+    def _cancel_realtime_session(self) -> None:
+        realtime = self._realtime_session
+        self._realtime_session = None
+        if realtime is not None:
+            try:
+                realtime.cancel()
+            except Exception:
+                LOG.debug("Failed to cancel OpenAI Realtime session", exc_info=True)
+
+    def _on_realtime_text(self, text: str, mode: OutputMode, session_id: int) -> bool:
+        if mode != OutputMode.LIVE_PASTE:
+            return False
+        with self._lock:
+            if not self._session_active(session_id) or self.state != DictationState.RECORDING:
+                return False
+        return self._process_and_output_transcript(
+            text,
+            OutputMode.LIVE_PASTE,
+            live_chunk=True,
+            session_id=session_id,
+        )
+
+    def _finish_realtime_recording(
+        self,
+        final_audio: Path | None,
+        mode: OutputMode,
+        session_id: int,
+        realtime: OpenAIRealtimeTranscriptionSession,
+    ) -> None:
+        started_at = time.perf_counter()
+        try:
+            result = realtime.stop()
+            self._track(
+                "openai_realtime_finished",
+                session_id,
+                mode=mode.value,
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+                delivered_chars=result.delivered_chars,
+                error=result.error,
+                **self._transcript_fields(result.transcript),
+            )
+            if not self._session_active(session_id):
+                if final_audio is not None:
+                    unlink_audio(final_audio)
+                return
+            if result.error and not result.transcript:
+                self._fallback_after_realtime(final_audio, mode, session_id, result)
+                final_audio = None
+                return
+            if not result.transcript:
+                self._fallback_after_realtime(final_audio, mode, session_id, result)
+                final_audio = None
+                return
+
+            if mode == OutputMode.CLIPBOARD:
+                self._process_and_output_transcript(result.transcript, mode, live_chunk=False, session_id=session_id)
+            elif result.delivered_any:
+                missing_text = _missing_realtime_suffix(result.transcript, result.delivered_text)
+                if missing_text:
+                    self._process_and_output_transcript(
+                        missing_text,
+                        mode,
+                        live_chunk=False,
+                        session_id=session_id,
+                    )
+                self.paste_target.copy_text(result.transcript)
+                self._track(
+                    "output_written",
+                    session_id,
+                    mode=mode.value,
+                    live_chunk=False,
+                    destination="clipboard_full_transcript",
+                    **self._transcript_fields(result.transcript),
+                )
+            else:
+                self._process_and_output_transcript(result.transcript, mode, live_chunk=False, session_id=session_id)
+
+            if self._session_active(session_id):
+                self._finish_session(session_id, "finished", mode, transcript=result.transcript)
+                if mode == OutputMode.CLIPBOARD:
+                    self._set_state(DictationState.IDLE, "Text in Zwischenablage")
+                else:
+                    self._set_state(DictationState.IDLE, "Text eingefuegt und in Zwischenablage")
+        except Exception as exc:
+            if self._session_active(session_id):
+                self._set_error(exc)
+        finally:
+            if final_audio is not None:
+                unlink_audio(final_audio)
+            if self._session_active(session_id):
+                self._disable_recording_controls()
+
+    def _fallback_after_realtime(
+        self,
+        final_audio: Path | None,
+        mode: OutputMode,
+        session_id: int,
+        result: RealtimeTranscriptResult,
+    ) -> None:
+        if final_audio is None:
+            self._finish_session(session_id, "no_text", mode, transcript=result.transcript)
+            self._set_state(DictationState.IDLE, "Kein Text erkannt")
+            return
+
+        self._track(
+            "openai_realtime_local_fallback_started",
+            session_id,
+            mode=mode.value,
+            reason=result.error or "empty_realtime_transcript",
+            delivered_chars=result.delivered_chars,
+        )
+        self._set_state(DictationState.TRANSCRIBING, "Lokaler Fallback laeuft")
+        if result.delivered_any and mode == OutputMode.LIVE_PASTE:
+            transcript = self._transcribe_audio_path(final_audio, session_id)
+            if transcript:
+                self.paste_target.copy_text(transcript)
+                self._track(
+                    "output_written",
+                    session_id,
+                    mode=mode.value,
+                    live_chunk=False,
+                    destination="clipboard_local_fallback_full_transcript",
+                    **self._transcript_fields(transcript),
+                )
+                self._finish_session(session_id, "fallback_clipboard", mode, transcript=transcript)
+                self._set_state(DictationState.IDLE, "Lokaler Fallback in Zwischenablage")
+            else:
+                self._finish_session(session_id, "no_text", mode)
+                self._set_state(DictationState.IDLE, "Kein Text erkannt")
+            return
+
+        wrote = self._transcribe_and_output(final_audio, mode, live_chunk=False, session_id=session_id)
+        self._finish_session(session_id, "fallback_finished" if wrote else "no_text", mode)
+        if mode == OutputMode.CLIPBOARD:
+            self._set_state(DictationState.IDLE, "Text in Zwischenablage")
+        else:
+            self._set_state(DictationState.IDLE, "Text eingefuegt und in Zwischenablage")
 
     def _start_live_worker(self, session_id: int) -> None:
         self._stop_live_worker(wait=True)
@@ -953,6 +1173,7 @@ class DictationController:
         )
         self._session_started_at.pop(session_id, None)
         self._stop_live_worker(wait=False)
+        self._cancel_realtime_session()
         self.chunks.stop_fast(wait=False)
         self.chunks.stop_quality(wait=False, close_backend=True)
         self._stop_level_worker(wait=False)
@@ -969,3 +1190,13 @@ def _format_live_text(text: str) -> str:
     if stripped.endswith((" ", "\n")):
         return stripped
     return stripped + " "
+
+
+def _missing_realtime_suffix(transcript: str, delivered_text: str) -> str:
+    full = " ".join(transcript.split())
+    delivered = " ".join(delivered_text.split())
+    if not full or not delivered:
+        return full
+    if full.startswith(delivered):
+        return full[len(delivered) :].strip()
+    return ""

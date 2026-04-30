@@ -1,10 +1,11 @@
 # RedMic Dictate Anleitung
 
-RedMic Dictate ist ein lokales Diktier-Tool fuer Windows. Es laeuft im
-Hintergrund, nimmt per Tastenkombination Sprache auf, transkribiert lokal mit
-`whisper.cpp` und schreibt den Text entweder direkt in das aktive Eingabefeld
-oder legt ihn in die Zwischenablage. Fuer die Zwischenablage kann der Text
-zusaetzlich lokal mit Ollama und `llama3.2:3b` nachkorrigiert werden.
+RedMic Dictate ist ein hybrides Diktier-Tool fuer Windows. Es laeuft im
+Hintergrund, nimmt per Tastenkombination Sprache auf, transkribiert standardmaessig
+live ueber OpenAI Realtime mit `gpt-4o-mini-transcribe` und schreibt den Text
+entweder direkt in das aktive Eingabefeld oder legt ihn in die Zwischenablage.
+Wenn kein API-Key, kein Netz oder kein nutzbarer OpenAI-Stream vorhanden ist,
+faellt RedMic automatisch auf lokales `whisper.cpp` zurueck.
 
 ## Tastenkombinationen
 
@@ -87,8 +88,9 @@ Autostart wieder entfernen:
 3. Sprich den Text.
 4. Druecke `Space`, um zu stoppen.
 
-Der fertige Text wird eingefuegt und bleibt gleichzeitig als Sicherung in der
-Zwischenablage.
+Mit OpenAI Realtime werden stabile Teilstuecke schon waehrend der Aufnahme
+eingefuegt. Nach `Space` wird der Rest abgeschlossen; der volle Text bleibt
+gleichzeitig als Sicherung in der Zwischenablage.
 
 Fuer die Zwischenablage:
 
@@ -148,17 +150,44 @@ tracking_enabled = true
 tracking_retention_days = 14
 tracking_include_transcript_text = false
 tracking_transcript_preview_chars = 0
+backend = "openai_realtime"
+cloud_fallback = "local_whispercpp"
+openai_api_key_env = "OPENAI_API_KEY"
+openai_realtime_session_model = "gpt-realtime"
+openai_realtime_transcription_model = "gpt-4o-mini-transcribe"
+openai_realtime_fallback_model = "gpt-4o-transcribe"
+openai_realtime_commit_seconds = 3.0
+openai_realtime_finish_timeout_seconds = 7.0
 ```
 
 Wenn du Hotkeys aenderst, danach die App im Tray beenden und mit
 `.\scripts\start.ps1` neu starten.
 
+## OpenAI API-Key
+
+Fuer den Realtime-Modus muss der Key als Windows-Umgebungsvariable gesetzt sein:
+
+```powershell
+[Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "DEIN_OPENAI_API_KEY", "User")
+```
+
+Danach RedMic neu starten. Den Key nicht in die Config-Datei und nicht in Git
+schreiben. Ohne Key startet RedMic weiter und nutzt automatisch den lokalen
+Fallback.
+
 ## Modell und Geschwindigkeit
 
-Standard ist jetzt `base`, weil es auf CPU deutlich schneller als `small` ist.
-Im lokalen Test brauchte `base` fuer 15 Sekunden Audio rund 5 Sekunden,
-`small` rund 14 Sekunden. `small` bleibt die Option fuer hoehere Qualitaet, wenn
-Wartezeit weniger wichtig ist.
+Standard ist jetzt OpenAI Realtime mit `gpt-4o-mini-transcribe`, weil die lokale
+CPU-Transkription auf diesem Rechner zwar privat, aber fuer laengere Diktate zu
+langsam und zu wechselhaft war. Wenn die Mini-Qualitaet nicht reicht, kann in
+der Config `openai_realtime_transcription_model = "gpt-4o-transcribe"` gesetzt
+werden.
+
+Der lokale Fallback bleibt installiert. Lokal ist `base` der schnelle Pfad,
+weil es auf CPU deutlich schneller als `small` ist. Im lokalen Test brauchte
+`base` fuer 15 Sekunden Audio rund 5 Sekunden, `small` rund 14 Sekunden.
+`small` bleibt die Option fuer hoehere lokale Qualitaet, wenn Wartezeit weniger
+wichtig ist.
 
 RedMic transkribiert waehrend der Aufnahme alle 5 Sekunden einen Audio-Chunk mit
 `base` im Hintergrund. Zusaetzlich werden fertige 10-Sekunden-Gruppen parallel

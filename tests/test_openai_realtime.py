@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import unittest
+
+from voicely_alt.config import AppConfig
+from voicely_alt.openai_realtime import (
+    OpenAIRealtimeTranscriptionSession,
+    _session_update_payload,
+)
+
+
+class FakeAudioSource:
+    def read_stream_chunk(self) -> bytes:
+        return b""
+
+    def actual_sample_rate(self) -> int:
+        return 16000
+
+
+class OpenAIRealtimeTests(unittest.TestCase):
+    def test_session_update_uses_transcription_mini_model(self) -> None:
+        payload = _session_update_payload(AppConfig())
+
+        session = payload["session"]
+        self.assertEqual(session["type"], "transcription")
+        audio_input = session["audio"]["input"]
+        self.assertEqual(audio_input["format"]["rate"], 24000)
+        self.assertEqual(audio_input["transcription"]["model"], "gpt-4o-mini-transcribe")
+        self.assertEqual(audio_input["transcription"]["language"], "de")
+        self.assertIsNone(audio_input["turn_detection"])
+
+    def test_completed_items_are_delivered_in_commit_order(self) -> None:
+        delivered = []
+        realtime = OpenAIRealtimeTranscriptionSession(
+            AppConfig(),
+            FakeAudioSource(),
+            on_text=delivered.append,
+        )
+
+        realtime._handle_event(
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "b",
+                "transcript": "zweiter Teil",
+            }
+        )
+        realtime._handle_event(
+            {
+                "type": "input_audio_buffer.committed",
+                "item_id": "a",
+            }
+        )
+        realtime._handle_event(
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "a",
+                "transcript": "erster Teil",
+            }
+        )
+        realtime._handle_event(
+            {
+                "type": "input_audio_buffer.committed",
+                "item_id": "b",
+            }
+        )
+
+        result = realtime.result()
+        self.assertEqual(delivered, ["erster Teil", "zweiter Teil"])
+        self.assertEqual(result.transcript, "erster Teil zweiter Teil")
+        self.assertTrue(result.delivered_any)
+
+
+if __name__ == "__main__":
+    unittest.main()

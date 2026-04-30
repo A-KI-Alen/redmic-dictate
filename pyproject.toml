@@ -9,6 +9,7 @@ dependencies = [
   "sounddevice>=0.5.1",
   "pystray>=0.19.5",
   "Pillow>=10.4.0",
+  "websocket-client>=1.8.0",
 ]
 
 [project.scripts]

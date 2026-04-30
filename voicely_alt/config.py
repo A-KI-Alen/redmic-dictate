@@ -19,7 +19,7 @@ class AppConfig:
     cancel_hotkey: str = "esc"
     hard_abort_hotkey: str = "space+esc"
     hard_abort_window_ms: int = 250
-    backend: str = "local_whispercpp"
+    backend: str = "openai_realtime"
     language: str = "de"
     transcription_prompt: str = (
         "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. "
@@ -35,7 +35,18 @@ class AppConfig:
     threads: str = "auto"
     paste_method: str = "clipboard"
     keep_transcript_clipboard: bool = True
-    cloud_fallback: str = "manual"
+    cloud_fallback: str = "local_whispercpp"
+    openai_api_key_env: str = "OPENAI_API_KEY"
+    openai_realtime_url: str = "wss://api.openai.com/v1/realtime"
+    openai_realtime_session_model: str = "gpt-realtime"
+    openai_realtime_transcription_model: str = "gpt-4o-mini-transcribe"
+    openai_realtime_fallback_model: str = "gpt-4o-transcribe"
+    openai_realtime_audio_rate: int = 24000
+    openai_realtime_commit_seconds: float = 3.0
+    openai_realtime_finish_timeout_seconds: float = 7.0
+    openai_realtime_connect_timeout_seconds: float = 6.0
+    openai_realtime_send_interval_ms: int = 120
+    openai_realtime_noise_reduction: str = "near_field"
     host: str = "127.0.0.1"
     port: int = 18080
     sample_rate: int = 16000

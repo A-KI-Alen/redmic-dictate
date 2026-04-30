@@ -30,6 +30,7 @@ class AudioRecorder:
         self._actual_sample_rate = config.sample_rate
         self._latest_level = 0.0
         self._latest_level_at = 0.0
+        self._stream_offset = 0
 
     def start(self) -> None:
         with self._lock:
@@ -41,6 +42,7 @@ class AudioRecorder:
             self._actual_sample_rate = self.config.sample_rate
             self._latest_level = 0.0
             self._latest_level_at = time.monotonic()
+            self._stream_offset = 0
 
             try:
                 self._stream = self._open_stream(self._actual_sample_rate)
@@ -86,7 +88,6 @@ class AudioRecorder:
             if not self._frames:
                 return None
             frames = bytes(self._frames)
-            self._frames = bytearray()
             if pcm16_rms(frames) < self.config.silence_rms_threshold:
                 return None
             return self._write_wav(frames)
@@ -96,6 +97,7 @@ class AudioRecorder:
             self._close_stream()
             self._frames = bytearray()
             self._latest_level = 0.0
+            self._stream_offset = 0
 
     def current_level(self) -> float:
         with self._lock:
@@ -105,6 +107,18 @@ class AudioRecorder:
             if age > 0.8:
                 return 0.0
             return max(0.0, min(1.0, level * max(0.0, 1.0 - age / 0.8)))
+
+    def read_stream_chunk(self) -> bytes:
+        with self._lock:
+            if self._stream_offset >= len(self._frames):
+                return b""
+            frames = bytes(self._frames[self._stream_offset :])
+            self._stream_offset = len(self._frames)
+            return frames
+
+    def actual_sample_rate(self) -> int:
+        with self._lock:
+            return int(self._actual_sample_rate)
 
     def _open_stream(self, sample_rate: int):
         import sounddevice as sd

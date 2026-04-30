@@ -1,7 +1,9 @@
 # RedMic Dictate
 
-Local-first dictation for Windows with a global recording hotkey and offline
-transcription through `whisper.cpp`.
+Hybrid dictation for Windows with a global recording hotkey. The default path
+uses OpenAI Realtime transcription with `gpt-4o-mini-transcribe`; if no API key,
+network, or Realtime session is available, RedMic falls back to local
+`whisper.cpp`.
 
 Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 
@@ -14,7 +16,13 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Stops recording with plain `Space` while recording.
 - Cancels recording with `Esc` while recording.
 - Hard-aborts with `Space+Esc` in any active state.
-- Sends the temporary WAV file to a local `whisper.cpp` server.
+- Streams microphone audio to OpenAI Realtime transcription in 3-second commits.
+- Uses `gpt-4o-mini-transcribe` first; `gpt-4o-transcribe` is the planned
+  quality upgrade if mini is not good enough.
+- Falls back to local `whisper.cpp` automatically when OpenAI Realtime cannot
+  start or returns no usable text.
+- Keeps the full local recording while streaming, so fallback has the whole
+  dictation available.
 - Pastes the German transcript into the currently focused input field.
 - Keeps every final transcript in the clipboard as a fallback.
 - Can locally clean up clipboard dictations with Ollama and `llama3.2:3b`.
@@ -53,6 +61,15 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
 .\scripts\setup_llm.ps1
 .\scripts\start.ps1
 ```
+
+For OpenAI Realtime mode, set an API key in your Windows user environment
+before starting the app:
+
+```powershell
+[Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "DEIN_OPENAI_API_KEY", "User")
+```
+
+Do not put the API key into `config.toml` or commit it to Git.
 
 To start RedMic Dictate automatically when you log in to Windows:
 
@@ -100,7 +117,7 @@ stop_hotkey = "space"
 cancel_hotkey = "esc"
 hard_abort_hotkey = "space+esc"
 hard_abort_window_ms = 250
-backend = "local_whispercpp"
+backend = "openai_realtime"
 language = "de"
 transcription_prompt = "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. Schreibe keine englischen Woerter, ausser sie wurden klar gesprochen. Fachbegriffe: RedMic Dictate, Windows, Alt, Shift, Zwischenablage, Transkription, Mikrofon, Codex, OpenAI."
 whisper_no_fallback = true
@@ -110,7 +127,18 @@ model = "auto"
 threads = "auto"
 paste_method = "clipboard"
 keep_transcript_clipboard = true
-cloud_fallback = "manual"
+cloud_fallback = "local_whispercpp"
+openai_api_key_env = "OPENAI_API_KEY"
+openai_realtime_url = "wss://api.openai.com/v1/realtime"
+openai_realtime_session_model = "gpt-realtime"
+openai_realtime_transcription_model = "gpt-4o-mini-transcribe"
+openai_realtime_fallback_model = "gpt-4o-transcribe"
+openai_realtime_audio_rate = 24000
+openai_realtime_commit_seconds = 3.0
+openai_realtime_finish_timeout_seconds = 7.0
+openai_realtime_connect_timeout_seconds = 6.0
+openai_realtime_send_interval_ms = 120
+openai_realtime_noise_reduction = "near_field"
 silence_rms_threshold = 60
 live_streaming = false
 live_chunk_seconds = 4
@@ -151,6 +179,8 @@ benchmark has been run yet, it falls back to `base`.
 
 - The app is Windows-first. The core is cross-platform-ready, but global hotkeys
   and paste behavior must be verified per operating system.
+- OpenAI Realtime needs the `OPENAI_API_KEY` environment variable. Without it,
+  RedMic logs the reason and immediately uses the local whisper.cpp fallback.
 - Direct field dictation also leaves the final transcript in the clipboard. If
   the cursor has moved while local processing runs, use `Ctrl+V` or `Windows+V`
   to recover the text.
