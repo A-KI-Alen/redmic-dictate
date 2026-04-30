@@ -85,8 +85,7 @@ class AppConfig:
         if not target.exists():
             return cls()
 
-        with target.open("rb") as handle:
-            raw = tomllib.load(handle)
+        raw = tomllib.loads(target.read_text(encoding="utf-8-sig"))
 
         allowed = cls.__dataclass_fields__.keys()
         values = {key: raw[key] for key in raw.keys() if key in allowed}
@@ -144,8 +143,7 @@ def _missing_config_keys(path: Path, expected: Any) -> bool:
     if not path.exists():
         return True
     try:
-        with path.open("rb") as handle:
-            raw = tomllib.load(handle)
+        raw = tomllib.loads(path.read_text(encoding="utf-8-sig"))
         return any(key not in raw for key in expected)
     except Exception:
         return False

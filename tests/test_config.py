@@ -80,6 +80,17 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("tracking_enabled = true", written)
         self.assertIn('selected_model = "base"', written)
 
+    def test_config_load_accepts_utf8_bom(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('\ufeffselected_model = "base"\n', encoding="utf-8")
+
+            loaded = AppConfig.load(path)
+
+        self.assertEqual(loaded.selected_model, "base")
+
 
 if __name__ == "__main__":
     unittest.main()
