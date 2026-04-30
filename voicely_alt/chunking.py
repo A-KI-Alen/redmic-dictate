@@ -45,6 +45,9 @@ class ChunkResult:
     audio_path: Path | None = None
 
 
+FastResultCallback = Callable[[ChunkResult, int], None]
+
+
 @dataclass(slots=True)
 class QualityWork:
     start_index: int
@@ -75,6 +78,7 @@ class ChunkPipeline:
         session_active: SessionActive,
         quality_transcriber: Transcriber | None = None,
         tracker: Tracker | None = None,
+        fast_result_callback: FastResultCallback | None = None,
     ):
         self.config = config
         self.recorder = recorder
@@ -82,6 +86,7 @@ class ChunkPipeline:
         self.quality_transcriber = quality_transcriber
         self.session_active = session_active
         self.tracker = tracker
+        self.fast_result_callback = fast_result_callback
 
         self._stop_event: threading.Event | None = None
         self._producer_thread: threading.Thread | None = None
@@ -377,11 +382,15 @@ class ChunkPipeline:
         final_audio: Path | None,
         transcribe_audio: TranscribeAudio,
         progress: ProgressCallback,
+        skip_indexes: set[int] | None = None,
     ) -> str:
+        skipped = skip_indexes or set()
         parts: list[str] = []
         results = self.fast_results()
         quality_results = self.quality_results()
-        total_parts = len(results) + (1 if final_audio is not None else 0)
+        total_parts = len([result for result in results if result.index not in skipped]) + (
+            1 if final_audio is not None else 0
+        )
         done_parts = 0
         if total_parts:
             progress(0, total_parts)
@@ -392,12 +401,18 @@ class ChunkPipeline:
         position = 0
         while position < len(indexes):
             index = indexes[position]
+            if index in skipped:
+                position += 1
+                continue
             quality = quality_by_start.get(index)
-            if quality is not None:
+            if quality is not None and not any(
+                skipped_index in skipped for skipped_index in range(quality.start_index, quality.end_index + 1)
+            ):
                 parts.append(quality.text)
                 while position < len(indexes) and indexes[position] <= quality.end_index:
                     position += 1
-                    done_parts += 1
+                    if indexes[position - 1] not in skipped:
+                        done_parts += 1
                 progress(done_parts, total_parts)
                 continue
 
@@ -477,9 +492,8 @@ class ChunkPipeline:
                 if not self.session_active(session_id):
                     unlink_audio(result.audio_path)
                     return
-                self.store_fast_result(
-                    ChunkResult(index=result.index, text=text, audio_path=result.audio_path)
-                )
+                completed = ChunkResult(index=result.index, text=text, audio_path=result.audio_path)
+                self.store_fast_result(completed)
                 self._track(
                     "chunk_fast_completed",
                     session_id,
@@ -487,6 +501,7 @@ class ChunkPipeline:
                     duration_ms=int((time.perf_counter() - started_at) * 1000),
                     **self._transcript_fields(text),
                 )
+                self._publish_fast_result(completed, session_id)
                 self.maybe_queue_quality_chunk(result.index, result.audio_path)
             except Exception:
                 LOG.exception("Background chunk transcription failed")
@@ -547,14 +562,27 @@ class ChunkPipeline:
                     **self._transcript_fields(text),
                 )
             except Exception:
-                LOG.exception("Quality chunk transcription failed")
-                self._track(
-                    "quality_chunk_error",
-                    session_id,
-                    start_index=work.start_index,
-                    end_index=work.end_index,
-                    error="Quality chunk transcription failed",
-                )
+                if self._quality_session_active(session_id):
+                    LOG.exception("Quality chunk transcription failed")
+                    self._track(
+                        "quality_chunk_error",
+                        session_id,
+                        start_index=work.start_index,
+                        end_index=work.end_index,
+                        error="Quality chunk transcription failed",
+                    )
+                else:
+                    LOG.info(
+                        "Quality chunk %s-%s stopped after session changed",
+                        work.start_index,
+                        work.end_index,
+                    )
+                    self._track(
+                        "quality_chunk_cancelled",
+                        session_id,
+                        start_index=work.start_index,
+                        end_index=work.end_index,
+                    )
             finally:
                 self._mark_quality_in_progress(-1)
                 unlink_audio(work.audio_path)
@@ -621,12 +649,20 @@ class ChunkPipeline:
         except Exception:
             LOG.debug("Tracking failed for event %s", event, exc_info=True)
 
+    def _publish_fast_result(self, result: ChunkResult, session_id: int) -> None:
+        if self.fast_result_callback is None or not result.text:
+            return
+        try:
+            self.fast_result_callback(result, session_id)
+        except Exception:
+            LOG.debug("Fast result callback failed", exc_info=True)
+
 
 def join_transcript_parts(parts: list[str]) -> str:
     return " ".join(part.strip() for part in parts if part and part.strip()).strip()
 
 
-def _copy_audio_file(audio_path: Path) -> Path:
+def copy_audio_file(audio_path: Path) -> Path:
     descriptor, name = tempfile.mkstemp(
         prefix="redmic_quality_part_",
         suffix=".wav",
@@ -635,6 +671,10 @@ def _copy_audio_file(audio_path: Path) -> Path:
     os.close(descriptor)
     shutil.copy2(audio_path, name)
     return Path(name)
+
+
+def _copy_audio_file(audio_path: Path) -> Path:
+    return copy_audio_file(audio_path)
 
 
 def _combine_wav_files(paths: list[Path]) -> Path:

@@ -11,10 +11,12 @@ long-running background work.
 3. `ChunkPipeline` transcribes chunks in the background:
    - `base` is the fast path and has priority.
    - `small` is optional quality replacement and never blocks final output.
-4. `DictationController` assembles the final transcript and sends it to
+4. `DictationController` can progressively paste finished fast chunks while
+   retaining the full transcript for clipboard recovery and quality correction.
+5. `DictationController` assembles the final transcript and sends it to
    `ClipboardPaste`.
-5. `TrayApp` and `RecordingOverlay` display status, waveform, and progress.
-6. `EventTracker` writes local diagnostic events for later 24-hour reviews.
+6. `TrayApp` and `RecordingOverlay` display status, waveform, and progress.
+7. `EventTracker` writes local diagnostic events for later 24-hour reviews.
 
 ## Module Responsibilities
 
@@ -52,6 +54,7 @@ long-running background work.
 - `small` only receives chunks after the matching `base` chunks have completed.
 - `small` is skipped whenever the fast queue has backlog.
 - `small` gets a bounded wait window after `Space`.
+- Progressive live paste only appends text that has not already been inserted.
 - If finished `small` coverage is too low for a longer dictation, the quality
   guard can reprocess retained audio in the background and update the clipboard.
 - Every final transcript is copied to the clipboard as a recovery path.

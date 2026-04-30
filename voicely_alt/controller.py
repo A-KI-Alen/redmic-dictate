@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .benchmark import benchmark_models, record_sample
-from .chunking import ChunkPipeline, unlink_audio
+from .chunking import ChunkPipeline, ChunkResult, copy_audio_file, unlink_audio
 from .config import AppConfig
 from .focus import FocusTarget, capture_focus_target
 from .paths import benchmark_sample_path
@@ -91,6 +91,7 @@ class DictationController:
         self._focus_target: FocusTarget | None = None
         self._session_id = 0
         self._session_started_at: dict[int, float] = {}
+        self._progressive_pasted_chunks: set[int] = set()
         self._level_stop_event: threading.Event | None = None
         self._level_thread: threading.Thread | None = None
         self.chunks = ChunkPipeline(
@@ -100,6 +101,7 @@ class DictationController:
             quality_transcriber=quality_transcriber,
             session_active=self._session_active,
             tracker=tracker,
+            fast_result_callback=self._on_fast_chunk_completed,
         )
 
     def start_recording(self, mode: OutputMode = OutputMode.LIVE_PASTE) -> bool:
@@ -110,6 +112,7 @@ class DictationController:
                 self._session_id += 1
                 session_id = self._session_id
                 self._session_started_at[session_id] = time.monotonic()
+                self._progressive_pasted_chunks = set()
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self._track(
@@ -421,6 +424,7 @@ class DictationController:
         session_id: int,
     ) -> None:
         quality_guard_audio: Path | None = None
+        progressive_final_audio: Path | None = None
         try:
             self._track(
                 "chunked_final_started",
@@ -475,6 +479,9 @@ class DictationController:
                     unlink_audio(final_audio)
                 return
 
+            pasted_indexes = self._progressive_pasted_indexes(mode)
+            if pasted_indexes and final_audio is not None:
+                progressive_final_audio = copy_audio_file(final_audio)
             quality_guard_audio = self._build_quality_guard_audio(final_audio, session_id)
             transcript = self.chunks.assemble_transcript(
                 final_audio=final_audio,
@@ -499,16 +506,47 @@ class DictationController:
                 if quality_guard_audio is not None:
                     unlink_audio(quality_guard_audio)
                     quality_guard_audio = None
+                if progressive_final_audio is not None:
+                    unlink_audio(progressive_final_audio)
+                    progressive_final_audio = None
                 self._finish_session(session_id, "no_text", mode)
                 self._set_state(DictationState.IDLE, "Kein Text erkannt")
                 return
 
-            self._process_and_output_transcript(
-                transcript,
-                mode,
-                live_chunk=False,
-                session_id=session_id,
-            )
+            if pasted_indexes and mode == OutputMode.LIVE_PASTE:
+                missing_transcript = self.chunks.assemble_transcript(
+                    final_audio=progressive_final_audio,
+                    transcribe_audio=lambda audio_path: self._transcribe_audio_path(audio_path, session_id),
+                    progress=lambda done, total: self._set_state(
+                        DictationState.TRANSCRIBING,
+                        f"Ergaenze {done}/{total} Teile",
+                    ),
+                    skip_indexes=pasted_indexes,
+                )
+                progressive_final_audio = None
+                if missing_transcript:
+                    self._process_and_output_transcript(
+                        missing_transcript,
+                        mode,
+                        live_chunk=False,
+                        session_id=session_id,
+                    )
+                self.paste_target.copy_text(transcript)
+                self._track(
+                    "output_written",
+                    session_id,
+                    mode=mode.value,
+                    live_chunk=False,
+                    destination="clipboard_full_transcript",
+                    **self._transcript_fields(transcript),
+                )
+            else:
+                self._process_and_output_transcript(
+                    transcript,
+                    mode,
+                    live_chunk=False,
+                    session_id=session_id,
+                )
             if self._session_active(session_id):
                 should_run_quality_guard = self._should_run_quality_guard(
                     quality_guard_audio,
@@ -532,6 +570,8 @@ class DictationController:
         finally:
             if quality_guard_audio is not None:
                 unlink_audio(quality_guard_audio)
+            if progressive_final_audio is not None:
+                unlink_audio(progressive_final_audio)
             self.chunks.clear(delete_audio=True)
             if self._session_active(session_id):
                 self._disable_recording_controls()
@@ -582,6 +622,42 @@ class DictationController:
             raise
         finally:
             unlink_audio(audio_path)
+
+    def _on_fast_chunk_completed(self, result: ChunkResult, session_id: int) -> None:
+        if not self.config.progressive_live_paste:
+            return
+        if not result.text.strip():
+            return
+        with self._lock:
+            if not self._session_active(session_id):
+                return
+            if self.state != DictationState.RECORDING:
+                return
+            if self.output_mode != OutputMode.LIVE_PASTE:
+                return
+            if result.index in self._progressive_pasted_chunks:
+                return
+
+        if self._process_and_output_transcript(
+            result.text,
+            OutputMode.LIVE_PASTE,
+            live_chunk=True,
+            session_id=session_id,
+        ):
+            with self._lock:
+                self._progressive_pasted_chunks.add(result.index)
+            self._track(
+                "progressive_chunk_pasted",
+                session_id,
+                chunk_index=result.index,
+                **self._transcript_fields(result.text),
+            )
+
+    def _progressive_pasted_indexes(self, mode: OutputMode) -> set[int]:
+        if mode != OutputMode.LIVE_PASTE or not self.config.progressive_live_paste:
+            return set()
+        with self._lock:
+            return set(self._progressive_pasted_chunks)
 
     def _process_and_output_transcript(
         self,

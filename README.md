@@ -23,6 +23,8 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Shows a red cursor ring while recording and a rotating ring while processing.
 - Shows a translucent red taskbar wave driven by the live microphone level while recording.
 - Switches the taskbar wave to a heartbeat curve while processing.
+- Progressively pastes finished fast chunks into the active field while you keep
+  speaking, so there is visible text feedback during longer dictations.
 - Pre-transcribes 5-second chunks in the background to reduce the wait after stopping.
 - Uses `base` for fast 5-second chunks and, for longer recordings, runs `small`
   in parallel on 10-second groups to replace finished sections with higher
@@ -31,7 +33,7 @@ Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
   matching `base` chunks are already done and is skipped whenever the fast queue
   has backlog.
 - Gives the `small` quality worker a short wait window after `Space`; the
-  default is 6 seconds.
+  default is 7 seconds.
 - If `small` did not cover enough of a longer dictation, starts a background
   quality guard that transcribes the retained audio with `small` and copies the
   improved version into the clipboard when ready.
@@ -112,14 +114,15 @@ cloud_fallback = "manual"
 silence_rms_threshold = 60
 live_streaming = false
 live_chunk_seconds = 4
+progressive_live_paste = true
 background_chunking = true
 background_chunk_seconds = 5
 quality_chunking = true
 quality_model = "small"
-quality_threads = "2"
+quality_threads = "6"
 quality_chunk_seconds = 10
-quality_max_fast_backlog = 0
-quality_wait_after_stop_seconds = 6.0
+quality_max_fast_backlog = 1
+quality_wait_after_stop_seconds = 7.0
 quality_guard_enabled = true
 quality_guard_min_recording_seconds = 20
 quality_guard_min_coverage = 0.50
@@ -152,8 +155,8 @@ benchmark has been run yet, it falls back to `base`.
   the cursor has moved while local processing runs, use `Ctrl+V` or `Windows+V`
   to recover the text.
 - `Alt+Y` records into the active field target and inserts text after `Space`.
-  Live field insertion is disabled by default; instead, 5-second chunks are
-  transcribed in the background and joined after `Space`.
+  Finished 5-second chunks are also pasted progressively while recording. The
+  full transcript is kept in the clipboard after the run.
 - `Alt+Shift+Y` records until `Space`, then copies the final transcript into the
   clipboard and plays a discreet bell sound. By default this mode also runs a
   local LLM cleanup step before copying the text.

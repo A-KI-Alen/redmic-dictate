@@ -322,6 +322,53 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(quality.calls, 1)
             self.assertFalse(chunk.exists())
 
+    def test_progressive_live_paste_writes_fast_chunks_while_recording(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paste = FakePaste()
+            controller = DictationController(
+                config=AppConfig(progressive_live_paste=True),
+                recorder=FakeRecorder(Path(directory) / "unused.wav"),
+                transcriber=NamedFakeTranscriber(),
+                paste_target=paste,
+                controls=FakeControls(),
+                background=False,
+            )
+
+            self.assertTrue(controller.start_live_recording())
+            session_id = controller._session_id
+            controller._on_fast_chunk_completed(ChunkResult(index=0, text="erster Teil"), session_id)
+
+            self.assertEqual(paste.pasted, ["erster Teil "])
+            self.assertEqual(controller._progressive_pasted_chunks, {0})
+
+            controller.cancel_recording()
+
+    def test_progressive_final_pastes_only_missing_chunks_and_keeps_full_clipboard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "first.wav"
+            second = Path(directory) / "second.wav"
+            _write_test_wav(first)
+            _write_test_wav(second)
+            paste = FakePaste()
+            controller = DictationController(
+                config=AppConfig(progressive_live_paste=True),
+                recorder=FakeRecorder(Path(directory) / "unused.wav"),
+                transcriber=NamedFakeTranscriber(),
+                paste_target=paste,
+                controls=FakeControls(),
+                background=False,
+            )
+            controller._session_id = 1
+            controller._progressive_pasted_chunks = {0}
+            controller.chunks.store_fast_result(ChunkResult(index=0, text="erster Teil", audio_path=first))
+            controller.chunks.store_fast_result(ChunkResult(index=1, text="zweiter Teil", audio_path=second))
+
+            controller._transcribe_final_with_chunks(None, OutputMode.LIVE_PASTE, 1)
+
+            self.assertEqual(paste.pasted, ["zweiter Teil"])
+            self.assertEqual(paste.copied, ["erster Teil zweiter Teil"])
+            self.assertEqual(paste.text, "erster Teil zweiter Teil")
+
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "audio.wav"
