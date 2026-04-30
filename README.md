@@ -32,6 +32,8 @@ Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
   is driven by the fast `base` path.
 - Warms the `base` whisper server at app startup so short dictations do not pay
   model-load time after `Space`.
+- Forces German transcription with a German prompt, disables temperature fallback,
+  suppresses non-speech tokens, and refreshes long-running whisper servers.
 
 `Alt+Y` avoids Windows-reserved shortcuts that can be intercepted before the app sees them.
 
@@ -87,6 +89,10 @@ hard_abort_hotkey = "space+esc"
 hard_abort_window_ms = 250
 backend = "local_whispercpp"
 language = "de"
+transcription_prompt = "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. Schreibe keine englischen Woerter, ausser sie wurden klar gesprochen. Fachbegriffe: RedMic Dictate, Windows, Alt, Shift, Zwischenablage, Transkription, Mikrofon, Codex, OpenAI."
+whisper_no_fallback = true
+whisper_suppress_non_speech = true
+whisper_server_max_age_seconds = 14400
 model = "auto"
 threads = "auto"
 paste_method = "clipboard"

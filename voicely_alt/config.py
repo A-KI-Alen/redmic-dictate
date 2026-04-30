@@ -21,6 +21,15 @@ class AppConfig:
     hard_abort_window_ms: int = 250
     backend: str = "local_whispercpp"
     language: str = "de"
+    transcription_prompt: str = (
+        "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. "
+        "Schreibe keine englischen Woerter, ausser sie wurden klar gesprochen. "
+        "Fachbegriffe: RedMic Dictate, Windows, Alt, Shift, Zwischenablage, "
+        "Transkription, Mikrofon, Codex, OpenAI."
+    )
+    whisper_no_fallback: bool = True
+    whisper_suppress_non_speech: bool = True
+    whisper_server_max_age_seconds: int = 14400
     model: str = "auto"
     selected_model: str = ""
     threads: str = "auto"

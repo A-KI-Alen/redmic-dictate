@@ -29,13 +29,14 @@ class WhisperCppServerManager:
         self.config = config
         self.process: subprocess.Popen | None = None
         self._log_handle = None
+        self._started_at = 0.0
 
     @property
     def base_url(self) -> str:
         return f"http://{self.config.host}:{self.config.port}"
 
     def ensure_running(self) -> None:
-        if self.process is not None and self.is_running():
+        if self.process is not None and self.is_running() and not self._is_expired():
             return
         if self.process is not None and self.process.poll() is None:
             self.stop()
@@ -83,6 +84,7 @@ class WhisperCppServerManager:
             except subprocess.TimeoutExpired:
                 self.process.kill()
         self.process = None
+        self._started_at = 0.0
         if self._log_handle is not None:
             self._log_handle.close()
             self._log_handle = None
@@ -105,6 +107,13 @@ class WhisperCppServerManager:
             str(self.config.port),
             "-nt",
         ]
+        if self.config.whisper_no_fallback:
+            args.append("-nf")
+        if self.config.whisper_suppress_non_speech:
+            args.append("-sns")
+        prompt = str(self.config.transcription_prompt).strip()
+        if prompt:
+            args.extend(["--prompt", prompt])
 
         creationflags = 0
         if os.name == "nt":
@@ -118,6 +127,7 @@ class WhisperCppServerManager:
             stderr=subprocess.STDOUT,
             creationflags=creationflags,
         )
+        self._started_at = time.monotonic()
 
     def _wait_until_ready(self) -> None:
         deadline = time.monotonic() + 30
@@ -128,6 +138,10 @@ class WhisperCppServerManager:
                 return
             time.sleep(0.25)
         raise TranscriptionError("Timed out waiting for whisper-server to start.")
+
+    def _is_expired(self) -> bool:
+        max_age = max(0, int(self.config.whisper_server_max_age_seconds))
+        return bool(max_age and self._started_at and time.monotonic() - self._started_at > max_age)
 
 
 class WhisperCppTranscriber:
@@ -140,16 +154,27 @@ class WhisperCppTranscriber:
             LOG.info("Skipping transcription because audio is below silence threshold")
             return ""
 
+        started_at = time.monotonic()
         self.server.ensure_running()
         response = _post_multipart(
             self.server.base_url + "/inference",
             fields={
                 "temperature": "0.0",
+                "language": self.config.language,
+                "translate": "false",
+                "prompt": self.config.transcription_prompt,
                 "response_format": "json",
             },
             files={"file": audio_path},
         )
-        return _extract_text(response)
+        text = _extract_text(response)
+        LOG.info(
+            "Transcribed %s with %s in %.2fs",
+            audio_path.name,
+            self.config.resolved_model(),
+            time.monotonic() - started_at,
+        )
+        return text
 
     def close(self) -> None:
         self.server.stop()

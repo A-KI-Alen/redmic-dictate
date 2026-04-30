@@ -108,6 +108,10 @@ stop_hotkey = "space"
 cancel_hotkey = "esc"
 hard_abort_hotkey = "space+esc"
 language = "de"
+transcription_prompt = "Dies ist ein deutsches Diktat. Transkribiere ausschliesslich auf Deutsch. Schreibe keine englischen Woerter, ausser sie wurden klar gesprochen. Fachbegriffe: RedMic Dictate, Windows, Alt, Shift, Zwischenablage, Transkription, Mikrofon, Codex, OpenAI."
+whisper_no_fallback = true
+whisper_suppress_non_speech = true
+whisper_server_max_age_seconds = 14400
 model = "auto"
 selected_model = "base"
 live_streaming = false
@@ -154,6 +158,12 @@ noch der letzte Rest verarbeitet und alles zusammengesetzt werden.
 Der schnelle `base`-Whisper-Server wird beim Start der App im Hintergrund
 vorgeladen. Dadurch muss ein kurzes Diktat nach `Space` nicht erst das Modell
 laden.
+
+Zur Qualitaetsstabilisierung erzwingt RedMic Deutsch zusaetzlich mit einem
+festen Diktat-Prompt, deaktiviert Whisper-Temperatur-Fallbacks und unterdrueckt
+Nicht-Sprach-Tokens wie Musik-Hinweise. Lang laufende Whisper-Server werden
+regelmaessig neu gestartet, damit Standby- oder Uebernacht-Laeufe nicht
+traege werden.
 
 Die lokale LLM-Nachkorrektur laeuft standardmaessig nur bei `Alt+Shift+Y`,
 also fuer die Zwischenablage. `Alt+Y` ist im stabilen Standard ein
