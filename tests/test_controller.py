@@ -6,8 +6,9 @@ import wave
 from queue import Queue
 from pathlib import Path
 
+from voicely_alt.chunking import ChunkResult, QualityResult
 from voicely_alt.config import AppConfig
-from voicely_alt.controller import DictationController, _ChunkResult, _QualityResult
+from voicely_alt.controller import DictationController
 from voicely_alt.state import DictationState, OutputMode
 
 
@@ -165,7 +166,7 @@ class ControllerTests(unittest.TestCase):
                 background=False,
             )
             controller._session_id = 1
-            controller._store_chunk_result(_ChunkResult(index=0, text="erster Teil"))
+            controller.chunks.store_fast_result(ChunkResult(index=0, text="erster Teil"))
 
             controller._transcribe_final_with_chunks(final_audio, OutputMode.LIVE_PASTE, 1)
 
@@ -183,11 +184,11 @@ class ControllerTests(unittest.TestCase):
             background=False,
         )
         controller._session_id = 1
-        controller._store_chunk_result(_ChunkResult(index=0, text="base eins"))
-        controller._store_chunk_result(_ChunkResult(index=1, text="base zwei"))
-        controller._store_chunk_result(_ChunkResult(index=2, text="base drei"))
-        controller._store_chunk_result(_ChunkResult(index=3, text="base vier"))
-        controller._store_quality_result(_QualityResult(start_index=0, end_index=2, text="small block"))
+        controller.chunks.store_fast_result(ChunkResult(index=0, text="base eins"))
+        controller.chunks.store_fast_result(ChunkResult(index=1, text="base zwei"))
+        controller.chunks.store_fast_result(ChunkResult(index=2, text="base drei"))
+        controller.chunks.store_fast_result(ChunkResult(index=3, text="base vier"))
+        controller.chunks.store_quality_result(QualityResult(start_index=0, end_index=2, text="small block"))
 
         controller._transcribe_final_with_chunks(None, OutputMode.LIVE_PASTE, 1)
 
@@ -210,18 +211,18 @@ class ControllerTests(unittest.TestCase):
                 controls=FakeControls(),
                 background=False,
             )
-            controller._quality_queue = Queue()
+            controller.chunks._quality_queue = Queue()
             paths = [Path(directory) / f"chunk_{index}.wav" for index in range(3)]
             for index, path in enumerate(paths):
                 _write_test_wav(path, frames=160)
-                controller._maybe_queue_quality_chunk(index, path)
+                controller.chunks.maybe_queue_quality_chunk(index, path)
 
-            work = controller._quality_queue.get_nowait()
+            work = controller.chunks._quality_queue.get_nowait()
             try:
                 self.assertEqual(work.start_index, 0)
                 self.assertEqual(work.end_index, 2)
                 self.assertTrue(work.audio_path.exists())
-                self.assertEqual(controller._quality_pending_chunks, [])
+                self.assertEqual(controller.chunks._quality_pending_chunks, [])
             finally:
                 work.audio_path.unlink(missing_ok=True)
 
@@ -240,17 +241,17 @@ class ControllerTests(unittest.TestCase):
                 controls=FakeControls(),
                 background=False,
             )
-            controller._chunk_queue = Queue()
-            controller._quality_queue = Queue()
-            controller._chunk_queue.put(_ChunkResult(index=99, text="pending"))
+            controller.chunks._fast_queue = Queue()
+            controller.chunks._quality_queue = Queue()
+            controller.chunks._fast_queue.put(ChunkResult(index=99, text="pending"))
 
             paths = [Path(directory) / f"chunk_{index}.wav" for index in range(2)]
             for index, path in enumerate(paths):
                 _write_test_wav(path, frames=160)
-                controller._maybe_queue_quality_chunk(index, path)
+                controller.chunks.maybe_queue_quality_chunk(index, path)
 
-            self.assertTrue(controller._quality_queue.empty())
-            self.assertEqual(controller._quality_pending_chunks, [])
+            self.assertTrue(controller.chunks._quality_queue.empty())
+            self.assertEqual(controller.chunks._quality_pending_chunks, [])
 
     def test_stop_recording_closes_quality_worker_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -5,6 +5,8 @@ transcription through `whisper.cpp`.
 
 Deutsche Bedienungsanleitung: [ANLEITUNG.md](ANLEITUNG.md)
 
+Architecture notes: [ARCHITECTURE.md](ARCHITECTURE.md)
+
 ## What it does
 
 - Starts live dictation with `Alt+Y`.
