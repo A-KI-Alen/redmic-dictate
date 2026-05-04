@@ -10,6 +10,8 @@ from .config import AppConfig
 
 LOG = logging.getLogger(__name__)
 
+_RECORDING_CONTROL_ARM_DELAY_SECONDS = 0.35
+
 
 class HotkeyError(RuntimeError):
     pass
@@ -302,24 +304,53 @@ class KeyboardHotkeyManager:
             thread.join(timeout=0.3)
 
     def _recording_monitor_loop(self, stop_event: threading.Event) -> None:
-        last_stop_down = False
-        last_cancel_down = False
+        started_at = time.monotonic()
+        initial_stop_down = self._is_pressed(self.config.stop_hotkey)
+        initial_cancel_down = self._is_pressed(self.config.cancel_hotkey)
+        stop_armed = not initial_stop_down
+        cancel_armed = not initial_cancel_down
+        last_stop_down = initial_stop_down if not stop_armed else False
+        last_cancel_down = initial_cancel_down if not cancel_armed else False
+
+        if initial_stop_down or initial_cancel_down:
+            LOG.info(
+                "Recording controls waiting for stale key release: stop=%s cancel=%s",
+                initial_stop_down,
+                initial_cancel_down,
+            )
 
         while not stop_event.wait(0.015):
             stop_down = self._is_pressed(self.config.stop_hotkey)
             cancel_down = self._is_pressed(self.config.cancel_hotkey)
+            if not stop_down:
+                stop_armed = True
+            if not cancel_down:
+                cancel_armed = True
 
-            if stop_down and cancel_down and not (last_stop_down and last_cancel_down):
+            if time.monotonic() - started_at < _RECORDING_CONTROL_ARM_DELAY_SECONDS:
+                if not stop_armed:
+                    last_stop_down = stop_down
+                if not cancel_armed:
+                    last_cancel_down = cancel_down
+                continue
+
+            if (
+                stop_down
+                and cancel_down
+                and stop_armed
+                and cancel_armed
+                and not (last_stop_down and last_cancel_down)
+            ):
                 LOG.info("Detected recording hard abort keys")
                 callback = self._on_hard_abort
                 if callback is not None:
                     self._safe_call(callback)
-            elif stop_down and not last_stop_down:
+            elif stop_down and stop_armed and not last_stop_down:
                 LOG.info("Detected recording stop key")
-                self._handle_stop_key()
-            elif cancel_down and not last_cancel_down:
+                self._handle_stop_key(force_stop=cancel_down and not cancel_armed)
+            elif cancel_down and cancel_armed and not last_cancel_down:
                 LOG.info("Detected recording cancel key")
-                self._handle_cancel_key()
+                self._handle_cancel_key(force_cancel=stop_down and not stop_armed)
 
             last_stop_down = stop_down
             last_cancel_down = cancel_down
@@ -351,7 +382,7 @@ class KeyboardHotkeyManager:
         with self._lock:
             self._hard_abort_latched = False
 
-    def _handle_stop_key(self) -> None:
+    def _handle_stop_key(self, force_stop: bool = False) -> None:
         with self._lock:
             if self._stop_pending:
                 return
@@ -360,7 +391,7 @@ class KeyboardHotkeyManager:
         def run() -> None:
             try:
                 time.sleep(max(0, int(self.config.hard_abort_window_ms)) / 1000)
-                if self._is_pressed(self.config.cancel_hotkey):
+                if not force_stop and self._is_pressed(self.config.cancel_hotkey):
                     callback = self._on_hard_abort
                 else:
                     callback = self._on_stop
@@ -372,8 +403,8 @@ class KeyboardHotkeyManager:
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _handle_cancel_key(self) -> None:
-        if self._is_pressed(self.config.stop_hotkey):
+    def _handle_cancel_key(self, force_cancel: bool = False) -> None:
+        if not force_cancel and self._is_pressed(self.config.stop_hotkey):
             callback = self._on_hard_abort
         else:
             callback = self._on_cancel

@@ -5,7 +5,11 @@ import unittest
 import sys
 
 from voicely_alt.config import AppConfig
-from voicely_alt.hotkeys import KeyboardHotkeyManager, _normalize_hotkey
+from voicely_alt.hotkeys import (
+    KeyboardHotkeyManager,
+    _RECORDING_CONTROL_ARM_DELAY_SECONDS,
+    _normalize_hotkey,
+)
 
 
 class FakeKeyboard:
@@ -112,6 +116,7 @@ class HotkeyTests(unittest.TestCase):
 
         self.assertEqual(keyboard.blocked, ["space", "esc"])
 
+        time.sleep(_RECORDING_CONTROL_ARM_DELAY_SECONDS + 0.05)
         keyboard.pressed.add("space")
         deadline = time.monotonic() + 1.0
         while not stop_calls and time.monotonic() < deadline:
@@ -127,6 +132,43 @@ class HotkeyTests(unittest.TestCase):
         manager.disable_recording_controls(force=True)
 
         self.assertEqual(stop_calls, ["stop"])
+        self.assertEqual(cancel_calls, ["cancel"])
+
+    def test_recording_controls_ignore_stale_cancel_key_on_enable(self) -> None:
+        keyboard = FakeKeyboard()
+        keyboard.pressed.add("esc")
+        manager = KeyboardHotkeyManager(AppConfig(hard_abort_window_ms=0))
+        manager._keyboard = keyboard
+
+        stop_calls = []
+        cancel_calls = []
+        manager._on_stop = lambda: stop_calls.append("stop")
+        manager._on_cancel = lambda: cancel_calls.append("cancel")
+
+        manager.enable_recording_controls()
+        time.sleep(_RECORDING_CONTROL_ARM_DELAY_SECONDS + 0.1)
+
+        self.assertEqual(cancel_calls, [])
+
+        keyboard.pressed.add("space")
+        deadline = time.monotonic() + 1.0
+        while not stop_calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        keyboard.pressed.discard("space")
+
+        self.assertEqual(stop_calls, ["stop"])
+        self.assertEqual(cancel_calls, [])
+
+        keyboard.pressed.discard("esc")
+        time.sleep(0.05)
+        keyboard.pressed.add("esc")
+        deadline = time.monotonic() + 1.0
+        while not cancel_calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        keyboard.pressed.clear()
+
+        manager.disable_recording_controls(force=True)
+
         self.assertEqual(cancel_calls, ["cancel"])
 
     def test_recording_controls_are_removed(self) -> None:
