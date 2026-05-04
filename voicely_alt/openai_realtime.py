@@ -390,6 +390,13 @@ def _session_update_payload(config: AppConfig) -> dict[str, object]:
     noise_reduction: object
     reduction = str(config.openai_realtime_noise_reduction).strip()
     noise_reduction = {"type": reduction} if reduction and reduction.lower() != "off" else None
+    transcription: dict[str, object] = {
+        "model": config.openai_realtime_transcription_model,
+        "language": config.language,
+    }
+    prompt = str(config.openai_realtime_prompt).strip()
+    if prompt:
+        transcription["prompt"] = prompt
     return {
         "type": "session.update",
         "session": {
@@ -401,11 +408,7 @@ def _session_update_payload(config: AppConfig) -> dict[str, object]:
                         "rate": int(config.openai_realtime_audio_rate),
                     },
                     "noise_reduction": noise_reduction,
-                    "transcription": {
-                        "model": config.openai_realtime_transcription_model,
-                        "language": config.language,
-                        "prompt": config.transcription_prompt,
-                    },
+                    "transcription": transcription,
                     "turn_detection": None,
                 }
             },

@@ -28,7 +28,14 @@ class OpenAIRealtimeTests(unittest.TestCase):
         self.assertEqual(audio_input["format"]["rate"], 24000)
         self.assertEqual(audio_input["transcription"]["model"], "gpt-4o-mini-transcribe")
         self.assertEqual(audio_input["transcription"]["language"], "de")
+        self.assertNotIn("prompt", audio_input["transcription"])
         self.assertIsNone(audio_input["turn_detection"])
+
+    def test_session_update_can_use_explicit_realtime_prompt(self) -> None:
+        payload = _session_update_payload(AppConfig(openai_realtime_prompt="Nur Deutsch."))
+
+        transcription = payload["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["prompt"], "Nur Deutsch.")
 
     def test_realtime_url_requests_transcription_intent(self) -> None:
         url = _realtime_url(

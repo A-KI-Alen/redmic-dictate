@@ -429,6 +429,7 @@ class DictationController:
             session_model=self.config.openai_realtime_session_model,
             transcription_model=self.config.openai_realtime_transcription_model,
             commit_seconds=self.config.openai_realtime_commit_seconds,
+            prompt_enabled=bool(self.config.openai_realtime_prompt.strip()),
         )
         return True
 
@@ -1341,6 +1342,9 @@ class DictationController:
     def _clean_transcript_text(self, text: str, session_id: int) -> str:
         original = str(text or "")
         cleaned = strip_prompt_leak(original, self.config.transcription_prompt)
+        realtime_prompt = str(getattr(self.config, "openai_realtime_prompt", "") or "").strip()
+        if realtime_prompt:
+            cleaned = strip_prompt_leak(cleaned, realtime_prompt)
         if cleaned != original.strip():
             self._track(
                 "transcript_prompt_leak_removed",

@@ -39,6 +39,8 @@ def build_app(config: AppConfig) -> tuple[DictationController, KeyboardHotkeyMan
         model=config.resolved_model(),
         quality_model=config.quality_model if config.quality_chunking else "",
         openai_realtime_transcription_model=config.openai_realtime_transcription_model,
+        openai_realtime_commit_seconds=config.openai_realtime_commit_seconds,
+        openai_realtime_prompt_enabled=bool(config.openai_realtime_prompt.strip()),
         cloud_fallback=config.cloud_fallback,
         language=config.language,
         live_hotkey=config.live_hotkey,

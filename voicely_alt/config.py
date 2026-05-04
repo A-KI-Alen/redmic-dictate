@@ -42,8 +42,9 @@ class AppConfig:
     openai_realtime_session_model: str = "gpt-realtime"
     openai_realtime_transcription_model: str = "gpt-4o-mini-transcribe"
     openai_realtime_fallback_model: str = "gpt-4o-transcribe"
+    openai_realtime_prompt: str = ""
     openai_realtime_audio_rate: int = 24000
-    openai_realtime_commit_seconds: float = 3.0
+    openai_realtime_commit_seconds: float = 2.0
     openai_realtime_finish_timeout_seconds: float = 7.0
     openai_realtime_connect_timeout_seconds: float = 6.0
     openai_realtime_send_interval_ms: int = 120
