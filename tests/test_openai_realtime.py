@@ -117,6 +117,22 @@ class OpenAIRealtimeTests(unittest.TestCase):
 
         self.assertEqual(progress[-1], (2, 2))
 
+    def test_runtime_error_notifies_once_and_stops_sender(self) -> None:
+        errors = []
+        realtime = OpenAIRealtimeTranscriptionSession(
+            AppConfig(),
+            FakeAudioSource(),
+            on_error=errors.append,
+        )
+
+        with self.assertLogs("voicely_alt.openai_realtime", level="WARNING") as logs:
+            realtime._set_error("connection failed")
+            realtime._set_error("second error")
+
+        self.assertEqual(errors, ["connection failed"])
+        self.assertEqual(len(logs.output), 1)
+        self.assertTrue(realtime._stop_event.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,6 +114,7 @@ class DictationController:
         self._session_started_epoch: dict[int, float] = {}
         self._progressive_pasted_chunks: set[int] = set()
         self._late_realtime_text: dict[int, list[str]] = {}
+        self._realtime_delivered_text: dict[int, list[str]] = {}
         self._last_idle_hard_abort_at = 0.0
         self._realtime_session: OpenAIRealtimeTranscriptionSession | None = None
         self._level_stop_event: threading.Event | None = None
@@ -139,6 +140,7 @@ class DictationController:
                 self._session_started_epoch[session_id] = time.time()
                 self._progressive_pasted_chunks = set()
                 self._late_realtime_text.clear()
+                self._realtime_delivered_text.clear()
                 self._focus_target = capture_focus_target()
                 self.output_mode = mode
                 self._track(
@@ -277,6 +279,7 @@ class DictationController:
                 self._session_started_at.pop(session_id, None)
                 self._session_started_epoch.pop(session_id, None)
                 self._late_realtime_text.pop(session_id, None)
+                self._realtime_delivered_text.pop(session_id, None)
                 self._set_state(DictationState.IDLE, "Aufnahme abgebrochen")
                 return True
             except Exception as exc:
@@ -322,6 +325,7 @@ class DictationController:
             self._session_started_at.pop(session_id, None)
             self._session_started_epoch.pop(session_id, None)
             self._late_realtime_text.clear()
+            self._realtime_delivered_text.clear()
 
         self._close_processing_backends()
         self._set_state(DictationState.IDLE, "Hart abgebrochen")
@@ -367,6 +371,7 @@ class DictationController:
             self._session_id += 1
             self.chunks.clear(delete_audio=True)
             self._late_realtime_text.clear()
+            self._realtime_delivered_text.clear()
             self._close_processing_backends()
             self._track("app_shutdown", None, active_session_id=self._session_id)
             self._set_state(DictationState.IDLE, "Beendet")
@@ -391,6 +396,7 @@ class DictationController:
             if mode == OutputMode.LIVE_PASTE
             else None,
             on_progress=lambda done, total: self._on_realtime_progress(done, total, session_id),
+            on_error=lambda message: self._on_realtime_error(message, mode, session_id),
         )
         try:
             realtime.start()
@@ -456,13 +462,16 @@ class DictationController:
                 return False
         if buffer_late:
             return self._buffer_late_realtime_text(text, session_id)
-        return self._process_and_output_transcript(
+        accepted = self._process_and_output_transcript(
             text,
             OutputMode.LIVE_PASTE,
             live_chunk=True,
             session_id=session_id,
             allowed_states={DictationState.RECORDING},
         )
+        if accepted:
+            self._remember_realtime_delivered_text(text, session_id)
+        return accepted
 
     def _on_realtime_progress(self, done: int, total: int, session_id: int) -> None:
         with self._lock:
@@ -474,6 +483,33 @@ class DictationController:
         done = max(0, min(int(done), total if total else int(done)))
         label_total = total if total else "?"
         self._set_state(DictationState.TRANSCRIBING, f"Online verarbeitet {done}/{label_total} Segmente")
+
+    def _on_realtime_error(self, message: str, mode: OutputMode, session_id: int) -> None:
+        with self._lock:
+            if not self._session_active(session_id):
+                return
+            if self.state != DictationState.RECORDING:
+                return
+            self._realtime_session = None
+
+        self._track(
+            "openai_realtime_live_fallback_started",
+            session_id,
+            mode=mode.value,
+            reason=message,
+            delivered_chars=len(self._realtime_delivered_text_for(session_id)),
+        )
+        self._publish_runtime_info("Lokal", self.config.resolved_model(), False, 0.0)
+        if mode == OutputMode.LIVE_PASTE:
+            if self.config.live_streaming:
+                self._start_live_worker(session_id)
+            elif self.config.background_chunking:
+                self.chunks.start(session_id)
+            self._set_state(DictationState.RECORDING, "Online unterbrochen, lokaler Fallback laeuft")
+        else:
+            if self.config.background_chunking:
+                self.chunks.start(session_id)
+            self._set_state(DictationState.RECORDING, "Online unterbrochen, Clipboard-Fallback laeuft")
 
     def _finish_realtime_recording(
         self,
@@ -816,7 +852,30 @@ class DictationController:
                 self._set_state(DictationState.IDLE, "Kein Text erkannt")
                 return
 
-            if pasted_indexes and mode == OutputMode.LIVE_PASTE:
+            realtime_delivered_text = self._realtime_delivered_text_for(session_id)
+            if realtime_delivered_text and mode == OutputMode.LIVE_PASTE:
+                missing_transcript = self._clean_transcript_text(
+                    _missing_realtime_suffix(transcript, realtime_delivered_text),
+                    session_id,
+                )
+                if missing_transcript:
+                    self._process_and_output_transcript(
+                        missing_transcript,
+                        mode,
+                        live_chunk=False,
+                        session_id=session_id,
+                    )
+                self.paste_target.copy_text(transcript)
+                self._track(
+                    "output_written",
+                    session_id,
+                    mode=mode.value,
+                    live_chunk=False,
+                    destination="clipboard_realtime_fallback_full_transcript",
+                    delivered_chars=len(realtime_delivered_text),
+                    **self._transcript_fields(transcript),
+                )
+            elif pasted_indexes and mode == OutputMode.LIVE_PASTE:
                 missing_transcript = self.chunks.assemble_transcript(
                     final_audio=progressive_final_audio,
                     transcribe_audio=lambda audio_path: self._transcribe_audio_path(audio_path, session_id),
@@ -934,6 +993,8 @@ class DictationController:
             return
         if not result.text.strip():
             return
+        if self._realtime_delivered_text_for(session_id):
+            return
         with self._lock:
             if not self._session_active(session_id):
                 return
@@ -989,6 +1050,20 @@ class DictationController:
             session_id=session_id,
             allowed_states={DictationState.TRANSCRIBING},
         )
+
+    def _remember_realtime_delivered_text(self, text: str, session_id: int) -> None:
+        cleaned = self._clean_transcript_text(text, session_id).strip()
+        if not cleaned:
+            return
+        with self._lock:
+            if not self._session_active(session_id):
+                return
+            self._realtime_delivered_text.setdefault(session_id, []).append(cleaned)
+
+    def _realtime_delivered_text_for(self, session_id: int) -> str:
+        with self._lock:
+            parts = self._realtime_delivered_text.get(session_id, [])
+        return " ".join(part.strip() for part in parts if part.strip()).strip()
 
     def _pop_late_realtime_text(self, session_id: int) -> str:
         with self._lock:
@@ -1076,7 +1151,12 @@ class DictationController:
 
     def _restore_focus_target(self) -> None:
         if self._focus_target is not None:
-            self._focus_target.restore()
+            for _ in range(3):
+                if self._focus_target.is_foreground():
+                    return
+                if self._focus_target.restore() and self._focus_target.is_foreground():
+                    return
+                time.sleep(0.05)
 
     def _publish_recording_status(self, message: str) -> None:
         with self._lock:
@@ -1329,6 +1409,7 @@ class DictationController:
         self._session_started_at.pop(session_id, None)
         self._session_started_epoch.pop(session_id, None)
         self._late_realtime_text.pop(session_id, None)
+        self._realtime_delivered_text.pop(session_id, None)
 
     def _transcript_fields(self, text: str, prefix: str = "transcript") -> dict[str, object]:
         if self.tracker is None:

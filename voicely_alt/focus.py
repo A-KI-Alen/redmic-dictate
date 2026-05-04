@@ -12,6 +12,17 @@ LOG = logging.getLogger(__name__)
 class FocusTarget:
     hwnd: int = 0
 
+    def is_foreground(self) -> bool:
+        if os.name != "nt" or not self.hwnd:
+            return False
+        try:
+            import ctypes
+
+            return int(ctypes.windll.user32.GetForegroundWindow()) == int(self.hwnd)
+        except Exception:
+            LOG.debug("Could not read foreground window", exc_info=True)
+            return False
+
     def restore(self) -> bool:
         if os.name != "nt" or not self.hwnd:
             return False

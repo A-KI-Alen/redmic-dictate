@@ -45,6 +45,7 @@ class RealtimeTranscriptResult:
 
 RealtimeTextCallback = Callable[[str], bool | None]
 RealtimeProgressCallback = Callable[[int, int], None]
+RealtimeErrorCallback = Callable[[str], None]
 
 
 class OpenAIRealtimeTranscriptionSession:
@@ -54,11 +55,13 @@ class OpenAIRealtimeTranscriptionSession:
         audio_source: AudioStreamSource,
         on_text: RealtimeTextCallback | None = None,
         on_progress: RealtimeProgressCallback | None = None,
+        on_error: RealtimeErrorCallback | None = None,
     ):
         self.config = config
         self.audio_source = audio_source
         self.on_text = on_text
         self.on_progress = on_progress
+        self.on_error = on_error
         self._ws = None
         self._stop_event = threading.Event()
         self._ready_event = threading.Event()
@@ -76,6 +79,7 @@ class OpenAIRealtimeTranscriptionSession:
         self._delivered_texts: list[str] = []
         self._last_commit_at = 0.0
         self._error = ""
+        self._error_notified = False
 
     def start(self) -> None:
         api_key = os.environ.get(self.config.openai_api_key_env, "").strip()
@@ -343,9 +347,18 @@ class OpenAIRealtimeTranscriptionSession:
 
     def _set_error(self, message: str) -> None:
         with self._lock:
-            if not self._error:
-                self._error = message
+            if self._error:
+                self._stop_event.set()
+                return
+            self._error = message
+            self._error_notified = True
+        self._stop_event.set()
         LOG.warning(message)
+        if self.on_error is not None:
+            try:
+                self.on_error(message)
+            except Exception:
+                LOG.debug("Realtime error callback failed", exc_info=True)
 
     def _progress_counts_locked(self) -> tuple[int, int]:
         completed = 0

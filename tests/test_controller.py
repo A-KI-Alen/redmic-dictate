@@ -381,6 +381,55 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(paste.copied, ["erster Teil zweiter Teil"])
             self.assertEqual(paste.text, "erster Teil zweiter Teil")
 
+    def test_realtime_runtime_error_switches_to_local_chunk_fallback(self) -> None:
+        controller = DictationController(
+            config=AppConfig(background_chunking=True),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=FakePaste(),
+            controls=FakeControls(),
+            background=False,
+        )
+        starts = []
+        runtime = []
+        statuses = []
+        controller.chunks.start = lambda session_id: starts.append(session_id)
+        controller.runtime_info_callback = lambda backend, model, online, rate: runtime.append(
+            (backend, model, online, rate)
+        )
+        controller.status_callback = lambda state, message: statuses.append((state, message))
+        controller._session_id = 1
+        controller.state = DictationState.RECORDING
+        controller.output_mode = OutputMode.LIVE_PASTE
+        controller._realtime_session = object()
+
+        controller._on_realtime_error("connection failed", OutputMode.LIVE_PASTE, 1)
+
+        self.assertIsNone(controller._realtime_session)
+        self.assertEqual(starts, [1])
+        self.assertEqual(controller.state, DictationState.RECORDING)
+        self.assertEqual(runtime[-1][0], "Lokal")
+        self.assertIn("lokaler Fallback", statuses[-1][1])
+
+    def test_realtime_fallback_final_pastes_only_missing_suffix_and_copies_full_text(self) -> None:
+        paste = FakePaste()
+        controller = DictationController(
+            config=AppConfig(),
+            recorder=FakeRecorder(Path("unused.wav")),
+            transcriber=FakeTranscriber(),
+            paste_target=paste,
+            controls=FakeControls(),
+            background=False,
+        )
+        controller._session_id = 1
+        controller._realtime_delivered_text[1] = ["erster Teil"]
+        controller.chunks.store_fast_result(ChunkResult(index=0, text="erster Teil zweiter Teil"))
+
+        controller._transcribe_final_with_chunks(None, OutputMode.LIVE_PASTE, 1)
+
+        self.assertEqual(paste.pasted, ["zweiter Teil"])
+        self.assertEqual(paste.copied, ["erster Teil zweiter Teil"])
+
     def test_space_stop_is_only_available_while_recording(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             audio_path = Path(directory) / "audio.wav"
